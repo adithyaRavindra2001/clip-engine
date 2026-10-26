@@ -77,7 +77,12 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
         folder = root / f"vid{n}"
         folder.mkdir(exist_ok=True)
         shutil.copy2(r["path"], folder / "vid.mp4")
-        qa.thumbnail(Path(r["path"]), r["hook"], folder / "thumbnail.jpg", frame=res["_thumb"], accent=cfg["brand"]["accent"])
+        src = Path(r["path"]).with_name("src.mp4")
+        opts = creator.source_options(r["url"]) if creator else {}
+        qa.thumbnail(Path(r["path"]), r["hook"], folder / "thumbnail.jpg", frame=res["_thumb"],
+                     accent=cfg["brand"]["accent"],
+                     clean={"src": src, "t": res["thumb_t"], "layout": creator.layout if creator else "auto",
+                            "facecam": creator.facecam if creator else None, **opts} if src.exists() else None)
         tags = hashtags(r["caption"] or "", creator)
         desc = (r["caption"] or "").strip()
         for t in (creator.required_tags if creator else []):

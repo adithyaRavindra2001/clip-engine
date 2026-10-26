@@ -44,6 +44,39 @@ def detect_faces(path: Path, samples: int = 12) -> list[tuple[int, int, int, int
     return boxes
 
 
+def _region_sharpness(path: Path, cam: tuple, samples: int = 4) -> float:
+    """Median Laplacian variance of the candidate facecam region, upscaled as the split layout would show it."""
+    x, y, w, h = (int(v) for v in cam)
+    cap = cv2.VideoCapture(str(path))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+    vals = []
+    for i in range(samples):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * (i + 0.5) / samples))
+        ok, frame = cap.read()
+        if not ok:
+            continue
+        reg = frame[y:y + max(h, 2), x:x + max(w, 2)]
+        if reg.size == 0:
+            continue
+        reg = cv2.resize(reg, (OUT_W, TOP_H))
+        vals.append(float(cv2.Laplacian(cv2.cvtColor(reg, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()))
+    cap.release()
+    return float(np.median(vals)) if vals else 0.0
+
+
+def frame_at(src: Path, t: float, layout: str = "auto", facecam: list[float] | None = None,
+             crop_top: float = 0.0, crop_bottom: float = 0.0):
+    """One 1080x1920 frame from the ORIGINAL source at time t, laid out exactly like the clip but
+    without captions or hook, as a BGR array. Used for clean thumbnails."""
+    L = choose_layout(src, layout, facecam)
+    graph = video_filter(L, crop_top, crop_bottom) + ";[base]null[v]"
+    out = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(src), "-filter_complex", graph, "-map", "[v]",
+         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True, check=True).stdout
+    arr = np.frombuffer(out, np.uint8)
+    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+
 def choose_layout(path: Path, layout: str, facecam: list[float] | None) -> dict:
     W, H = probe_size(path)
     if facecam:
@@ -69,8 +102,12 @@ def choose_layout(path: Path, layout: str, facecam: list[float] | None) -> dict:
         if layout == "split" or (layout == "auto" and small_corner_face):
             # Expand the face box to roughly the facecam frame.
             cw, ch = w * 2.8, h * 2.4
-            return {"kind": "split", "W": W, "H": H,
-                    "cam": (max(0, cx - cw / 2), max(0, y + h / 2 - ch / 2), min(cw, W), min(ch, H))}
+            cam = (max(0, cx - cw / 2), max(0, y + h / 2 - ch / 2), min(cw, W), min(ch, H))
+            # A real facecam overlay is sharp; a distant speaker on a wide stage is not, and would be
+            # magnified into mush. Fall back to a plain crop in that case.
+            if layout == "auto" and _region_sharpness(path, cam) < 45:
+                return {"kind": "crop", "W": W, "H": H, "cx": cx}
+            return {"kind": "split", "W": W, "H": H, "cam": cam}
         return {"kind": "crop", "W": W, "H": H, "cx": cx}
     return {"kind": "crop", "W": W, "H": H, "cx": W / 2}
 

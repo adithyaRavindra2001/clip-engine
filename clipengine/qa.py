@@ -57,7 +57,7 @@ def assess(clip: Path, hook: str, duration_range=(15, 60)) -> dict:
             faces_ok += inside
             faces_cut += not inside
             score = (fw * fh) / (w * h) * (1 if inside else 0.3) + min(lap, 400) / 4000
-            if best is None or score > best[0]:
+            if i >= 2 and (best is None or score > best[0]):   # skip the first ~12%: the hook box is on screen
                 best = (score, frame, i)
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
                                 str(clip)], capture_output=True, text=True).stdout.strip() or 0)
@@ -81,13 +81,26 @@ def assess(clip: Path, hook: str, duration_range=(15, 60)) -> dict:
         score -= 20; reasons.append(f"quiet audio ({vol:.0f} dB)")
     if not hook or len(hook.split()) < 2:
         score -= 10; reasons.append("weak or missing hook text")
+    thumb_t = (best[2] + 0.5) / 16 * dur if best else min(6.0, dur / 2)
     return {"qa": max(0, round(score)), "reasons": reasons, "face_frac": round(face_frac, 2),
-            "duration": round(dur, 1), "mean_volume_db": vol,
+            "duration": round(dur, 1), "mean_volume_db": vol, "thumb_t": round(thumb_t, 2),
             "thumb_frame_index": best[2] if best else None, "_thumb": best[1] if best else None}
 
 
-def thumbnail(clip: Path, hook: str, out: Path, frame=None, accent: str = "#FFD400") -> Path:
-    """Sharpest in-frame face shot from the clip, with the hook text as a bold title block."""
+def thumbnail(clip: Path, hook: str, out: Path, frame=None, accent: str = "#FFD400",
+              clean: dict | None = None) -> Path:
+    """Sharpest in-frame face shot, with the hook text as a bold title block.
+
+    `clean` = {"src": <original src.mp4>, "t": seconds, "layout", "facecam", "crop_top", "crop_bottom"}:
+    when given, the frame is re-cut from the uncaptioned source so no burned-in text shows under the title.
+    """
+    if clean:
+        from . import render as _r
+        try:
+            frame = _r.frame_at(Path(clean["src"]), clean["t"], clean.get("layout", "auto"), clean.get("facecam"),
+                                clean.get("crop_top", 0.0), clean.get("crop_bottom", 0.0))
+        except Exception:
+            frame = None
     if frame is None:
         res = assess(clip, hook)
         frame = res["_thumb"]
