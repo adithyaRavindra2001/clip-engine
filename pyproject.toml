@@ -12,6 +12,9 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python-headless>=4.9,<5",  # 5.x dropped the Haar face detector
     "flask>=3.0",
+    "google-api-python-client>=2.150",
+    "google-auth-oauthlib>=1.2",
+    "pillow>=10",
     # Apple Silicon: fast Metal transcription. Everywhere else: faster-whisper.
     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "faster-whisper>=1.1; sys_platform != 'darwin' or platform_machine != 'arm64'",
