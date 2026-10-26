@@ -1,0 +1,43 @@
+# Copy to config.yaml and fill in. Secrets can also come from environment
+# variables (ANTHROPIC_API_KEY, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, YOUTUBE_API_KEY).
+
+data_dir: ./data              # downloads, transcripts, rendered clips, database
+ready_dir: ./ready            # approved clips land here, ready for you to upload
+
+claude:
+  model: claude-opus-5-5
+  effort: medium              # low | medium | high — medium is plenty for picking moments
+  mode: api                   # api | file | auto. file = no key: prompt is written to
+                              # data/videos/<id>/pick_request.md, you answer in picks.json
+
+twitch:
+  client_id: ""               # https://dev.twitch.tv/console/apps -> register an app
+  client_secret: ""
+
+youtube:
+  api_key: ""                 # Google Cloud console -> enable "YouTube Data API v3" -> API key
+
+transcription:
+  model: mlx-community/whisper-large-v3-turbo   # on non-Mac machines: "large-v3-turbo"
+  language: en                # set explicitly; "hi" for Hindi. Auto-detect can mislabel Hinglish.
+
+brand:                        # your signature touches, applied to every clip automatically
+  accent: "#FFD400"           # caption highlight + progress bar colour
+  hook_animation: true        # hook text pops in
+  progress_bar: true          # thin bar along the bottom that fills as the clip plays
+  music: true                 # quiet royalty-free bed from music/<mood>/ (skipped when the folder is empty)
+  music_db: -22               # music level; speech automatically ducks it further
+  music_dir: ./music
+
+clips:
+  per_video: 8                # how many candidate moments Claude should return per VOD
+  min_seconds: 15
+  max_seconds: 55             # stay under 60s: Shorts over 60s with claimed content get blocked
+  max_height: 1080
+
+discovery:
+  twitch_language: en
+  twitch_top_streams: 100     # how many live streams to scan for prospects
+  vods_per_creator: 2         # newest VODs to consider per allowed creator per day
+  max_vod_age_days: 3
+  podcast_queries: ["podcast", "podcast clips", "interview"]

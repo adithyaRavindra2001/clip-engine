@@ -1,0 +1,28 @@
+# Copy to creators.yaml. This file is your permission registry.
+#
+# status: allowed   -> you have permission (joined their campaign, or they said yes in writing).
+#                      The engine will download and clip these.
+# status: prospect  -> interesting, but NO permission yet. The engine only reports on them
+#                      (so you can find their campaign or pitch them). It will refuse to clip them.
+#
+# Keep proof of permission (campaign link, email/DM screenshot) in `permission`.
+
+creators:
+  - name: ExampleStreamer
+    status: prospect
+    platform: twitch          # twitch | kick | youtube
+    handle: examplestreamer   # twitch/kick login, or YouTube @handle
+    permission: ""            # e.g. "Whop campaign https://whop.com/... joined 2026-10-26"
+    campaign_rules: ""        # paste the key rules from the brief: banned topics, required tags, platforms
+    required_tags: []         # e.g. ["#ad", "@examplestreamer"]
+    layout: auto              # auto | crop | split  (split = facecam on top, gameplay below)
+    facecam: null             # optional [x, y, w, h] as fractions of the frame, e.g. [0.72, 0.02, 0.26, 0.28]
+
+  - name: ExamplePodcast
+    status: prospect
+    platform: youtube
+    handle: "@examplepodcast"
+    permission: ""
+    campaign_rules: ""
+    required_tags: []
+    layout: crop

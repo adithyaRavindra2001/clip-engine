@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Runs scripts/daily_claude.sh every day at 17:30 local time, so drafts are ready by 19:00.
+  Install:  ./scripts/install_schedule.sh
+  Remove:   launchctl unload ~/Library/LaunchAgents/com.clipengine.daily.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.clipengine.daily</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>cd "__ROOT__" &amp;&amp; ./scripts/daily_claude.sh 1</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/clipengine/daily.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/clipengine/daily.log</string>
+</dict>
+</plist>

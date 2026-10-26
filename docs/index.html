@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Clip Engine</title>
+<style>
+:root{--bg:#fff;--fg:#111;--mute:#555;--acc:#c79b00}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1115;--fg:#e8eaf0;--mute:#9aa1ad;--acc:#f5c542}}
+:root[data-theme="dark"]{--bg:#0f1115;--fg:#e8eaf0;--mute:#9aa1ad;--acc:#f5c542}
+body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.6 -apple-system,system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:48px 16px}
+h1{font-size:2rem;margin:0 0 4px}h2{margin-top:36px}.mute{color:var(--mute)}a{color:var(--acc)}
+ol li,ul li{margin:6px 0}
+</style></head><body><main>
+<h1>Clip Engine</h1>
+<p class="mute">A personal tool that turns long-form podcasts and streams into short vertical clips, reviewed by hand before publishing.</p>
+
+<h2>What it does</h2>
+<ol>
+<li>Finds new long-form videos from creators who have given permission to be clipped, using the YouTube Data API.</li>
+<li>Transcribes them locally and selects the strongest moments.</li>
+<li>Renders 9:16 clips with captions and an on-screen hook.</li>
+<li>Queues every clip for manual review. Nothing is published without a person approving it.</li>
+<li>Uploads approved clips to the operator's own YouTube channel, using the YouTube Data API.</li>
+</ol>
+
+<h2>How it uses the YouTube API</h2>
+<ul>
+<li><strong>Read:</strong> channel upload lists and video metadata for creators on the operator's permission list, to find new episodes.</li>
+<li><strong>Write:</strong> uploading short clips to the operator's own channel, with the operator's own OAuth consent.</li>
+<li>It stores only video IDs, titles, durations and view counts needed to decide what to clip. It does not collect data about viewers or other users, and it does not sell, share or display YouTube data to anyone.</li>
+<li>It is run by one person for one channel. It is not a hosted service and has no third-party users.</li>
+</ul>
+
+<h2>Permission first</h2>
+<p>The engine only processes creators marked as allowed in its configuration, meaning the operator has joined that creator's clipping programme or has written permission. Every clip credits the source.</p>
+
+<p><a href="privacy.html">Privacy policy</a> · <a href="terms.html">Terms of service</a> · Contact: <span id="c"></span></p>
+<script>document.getElementById('c').textContent=['iocraftloom','gmail.com'].join('@')</script>
+</main></body></html>
