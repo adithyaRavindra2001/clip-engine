@@ -54,8 +54,19 @@ class Creator:
     facecam: list[float] | None = None
     # Fixed campaign footage (URLs or local files). `clip daily` rotates through these, cutting NEW moments
     # each day, instead of discovering fresh uploads. Use for brand campaigns that ship a folder of videos.
-    sources: list[str] = field(default_factory=list)
+    sources: list = field(default_factory=list)   # str, or {url, crop_bottom, crop_top} (fractions of frame height)
     cpm: float = 0.0          # $ per 1,000 views the campaign pays; daily works highest-paying creators first
+
+    @property
+    def source_urls(self) -> list[str]:
+        return [x["url"] if isinstance(x, dict) else x for x in self.sources]
+
+    def source_options(self, url: str) -> dict:
+        """Per-source render tweaks, e.g. crop_bottom: 0.14 to cut burned-in subtitles off a file."""
+        for x in self.sources:
+            if isinstance(x, dict) and x.get("url") == url:
+                return {k: v for k, v in x.items() if k != "url"}
+        return {}
 
     @property
     def allowed(self) -> bool:

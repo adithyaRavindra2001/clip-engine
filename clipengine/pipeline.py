@@ -81,7 +81,8 @@ def process(cfg: Config, db, source: str, creator_name: str,
                 words = transcribe.words_between(segments, m.start, m.end)
                 out = render.render(src, clip_dir / "clip.mp4", words, m.start, m.hook,
                                     creator.layout, creator.facecam, brand=cfg["brand"],
-                                    music=render.choose_music(cfg.music_dir, m.mood, video_id * 100 + n))
+                                    music=render.choose_music(cfg.music_dir, m.mood, video_id * 100 + n),
+                                    **creator.source_options(source))
             except Exception as e:
                 print(f"    [warn] clip {n} failed: {e}")
                 shutil.rmtree(clip_dir, ignore_errors=True)
@@ -128,6 +129,7 @@ def rerender(cfg: Config, db, clip_id: int, hook: str, trim_start: float = 0.0, 
     render.render(src, clip_dir / "clip.mp4", transcribe.words_between(segments, start, end), start, hook,
                   creator.layout if creator else "auto", creator.facecam if creator else None,
                   brand=cfg["brand"],
-                  music=render.choose_music(cfg.music_dir, row["mood"] or "neutral", row["video_id"] * 100 + n))
+                  music=render.choose_music(cfg.music_dir, row["mood"] or "neutral", row["video_id"] * 100 + n),
+                  **(creator.source_options(row["url"]) if creator else {}))
     db.execute("UPDATE clips SET hook = ?, start = ?, end = ? WHERE id = ?", (hook, start, end, clip_id))
     db.commit()

@@ -30,7 +30,7 @@ def cmd_daily(cfg, db, args):
     for c in fixed:
         if budget <= 0:
             break
-        src = min(c.sources, key=lambda u: store.clip_count(db, u))
+        src = min(c.source_urls, key=lambda u: store.clip_count(db, u))
         print(f"{c.name} (${c.cpm:.2f} CPM): cutting new moments from {src}")
         try:
             total += pipeline.process(cfg, db, src, c.name, force=True)

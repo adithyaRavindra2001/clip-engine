@@ -52,6 +52,17 @@ def choose_layout(path: Path, layout: str, facecam: list[float] | None) -> dict:
 
     boxes = detect_faces(path) if layout in ("auto", "crop", "split") else []
     if boxes:
+        # Several people on stage: a plain median of face positions can land between two speakers.
+        # Cluster by horizontal position and keep the cluster that appears in the most sampled frames.
+        W_ = probe_size(path)[0]
+        clusters: list[list[tuple[int, int, int, int]]] = []
+        for b in sorted(boxes, key=lambda b: b[0] + b[2] / 2):
+            cx_b = b[0] + b[2] / 2
+            if clusters and abs(cx_b - (clusters[-1][-1][0] + clusters[-1][-1][2] / 2)) < 0.12 * W_:
+                clusters[-1].append(b)
+            else:
+                clusters.append([b])
+        boxes = max(clusters, key=len)
         x, y, w, h = (float(np.median([b[i] for b in boxes])) for i in range(4))
         cx = x + w / 2
         small_corner_face = w < 0.12 * W and (cx < 0.3 * W or cx > 0.7 * W)
@@ -64,12 +75,15 @@ def choose_layout(path: Path, layout: str, facecam: list[float] | None) -> dict:
     return {"kind": "crop", "W": W, "H": H, "cx": W / 2}
 
 
-def video_filter(L: dict) -> str:
+def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0) -> str:
     W, H = L["W"], L["H"]
     if L["kind"] == "crop":
-        cw = min(_even(H * OUT_W / OUT_H), _even(W))
+        # Optionally drop bands at the top/bottom of the source first (burned-in subtitles, tickers).
+        y0 = _even(H * crop_top)
+        ch = _even(H * (1 - crop_top - crop_bottom))
+        cw = min(_even(ch * OUT_W / OUT_H), _even(W))
         x = _even(min(max(L["cx"] - cw / 2, 0), W - cw))
-        return f"[0:v]crop={cw}:{_even(H)}:{x}:0,scale={OUT_W}:{OUT_H},setsar=1[base]"
+        return f"[0:v]crop={cw}:{ch}:{x}:{y0},scale={OUT_W}:{OUT_H},setsar=1[base]"
 
     # split: facecam on top, centre of gameplay below
     fx, fy, fw, fh = L["cam"]
@@ -206,7 +220,8 @@ def _has_audio(path: Path) -> bool:
 
 def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
            layout: str = "auto", facecam: list[float] | None = None,
-           brand: dict | None = None, music: Path | None = None) -> Path:
+           brand: dict | None = None, music: Path | None = None,
+           crop_top: float = 0.0, crop_bottom: float = 0.0) -> Path:
     b = {**DEFAULT_BRAND, **(brand or {})}
     L = choose_layout(src, layout, facecam)
     duration = float(subprocess.run(
@@ -216,7 +231,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
                              accent=b["accent"], hook_animation=b["hook_animation"]))
 
-    graph = video_filter(L) + f";[base]subtitles={ass.name}[s]"
+    graph = video_filter(L, crop_top, crop_bottom) + f";[base]subtitles={ass.name}[s]"
     if b["progress_bar"]:
         graph += (f";[s]drawbox=x=0:y=ih-14:w='iw*min(t/{duration:.3f},1)':h=14:"
                   f"color={_ff_colour(b['accent'])}@0.9:t=fill[v]")
