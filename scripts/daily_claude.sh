@@ -51,4 +51,5 @@ PY
 clip daily --max-videos "$MAX_VIDEOS" --no-prospects
 answer_pending
 clip daily --max-videos "$MAX_VIDEOS"
+clip morning --limit "${MORNING_LIMIT:-5}"
 echo "=== $(date '+%F %T') daily done ==="

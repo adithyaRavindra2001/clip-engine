@@ -3,6 +3,7 @@
   clip daily                     discover fresh VODs from allowed creators, clip them, write prospects report
   clip run URL --creator NAME    clip one VOD / podcast (URL or local file)
   clip discover                  prospects report only
+  clip morning                   auto-pick today's uploads -> todays-yt/<date>/vidN/ (vid.mp4, info.txt, thumbnail.jpg)
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
   clip stats                     quick performance summary
@@ -14,7 +15,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import discover, learn, pipeline, review, store
+from . import discover, learn, morning, pipeline, review, store
 from .config import Config
 
 
@@ -66,6 +67,12 @@ def cmd_discover(cfg, db, args):
     print(f"Prospects report: {out}")
 
 
+def cmd_morning(cfg, db, args):
+    root = morning.build(cfg, db, args.date, limit=args.limit, min_qa=args.min_qa)
+    print((root / "SUMMARY.txt").read_text())
+    print(f"Pack: {root}")
+
+
 def cmd_review(cfg, db, args):
     review.serve(cfg, args.port)
 
@@ -104,6 +111,12 @@ def main(argv: list[str] | None = None) -> None:
     d.set_defaults(fn=cmd_daily)
 
     sub.add_parser("discover", help="prospects report").set_defaults(fn=cmd_discover)
+
+    m = sub.add_parser("morning", help="auto-select today's best clips into todays-yt/<date>/vidN/ with info.txt + thumbnail")
+    m.add_argument("--date", default=None)
+    m.add_argument("--limit", type=int, default=5)
+    m.add_argument("--min-qa", type=int, default=60)
+    m.set_defaults(fn=cmd_morning)
 
     v = sub.add_parser("review", help="open the review page")
     v.add_argument("--port", type=int, default=8765)

@@ -40,9 +40,11 @@ def connect(data_dir: Path) -> sqlite3.Connection:
     db = sqlite3.connect(data_dir / "clipengine.db")
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
-    if "mood" not in [r[1] for r in db.execute("PRAGMA table_info(clips)")]:
-        db.execute("ALTER TABLE clips ADD COLUMN mood TEXT DEFAULT 'neutral'")
-        db.commit()
+    cols = [r[1] for r in db.execute("PRAGMA table_info(clips)")]
+    for col, ddl in (("mood", "TEXT DEFAULT 'neutral'"), ("qa", "INTEGER"), ("qa_reasons", "TEXT")):
+        if col not in cols:
+            db.execute(f"ALTER TABLE clips ADD COLUMN {col} {ddl}")
+    db.commit()
     return db
 
 

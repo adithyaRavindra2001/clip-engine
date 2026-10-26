@@ -26,7 +26,8 @@ Hard rules:
 after the payoff.
 - Timestamps must come from the transcript. Do not invent dialogue.
 - Moments must not overlap.
-- Follow the campaign rules exactly; drop any moment that breaks them.
+- Follow the campaign rules exactly; drop any moment that breaks them. If the rules require a specific \
+audience geography (e.g. 40%+ US/UK/CA/AU), avoid moments centred on other countries or audiences.
 - The hook text is on-screen text in the clip's first seconds: max 8 words, punchy, adds \
 context or tension — this is our original contribution, so make it genuinely useful, not clickbait \
 that the clip doesn't deliver.
