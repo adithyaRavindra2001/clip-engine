@@ -16,6 +16,19 @@ from PIL import Image, ImageDraw, ImageFont
 
 OUT_W, OUT_H = 1080, 1920
 _CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+_PROFILE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
+
+
+def _find_faces(gray):
+    """Frontal + profile (both directions) so people talking to each other on stage still count."""
+    h, w = gray.shape
+    args = dict(scaleFactor=1.1, minNeighbors=4, minSize=(w // 12, w // 12))
+    found = list(_CASCADE.detectMultiScale(gray, **args))
+    found += list(_PROFILE.detectMultiScale(gray, **args))
+    flipped = cv2.flip(gray, 1)
+    for (x, y, fw, fh) in _PROFILE.detectMultiScale(flipped, **args):
+        found.append((w - x - fw, y, fw, fh))
+    return found
 
 
 def _frames(path: Path, n: int = 16):
@@ -49,8 +62,7 @@ def assess(clip: Path, hook: str, duration_range=(15, 60)) -> dict:
         lap = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         bright += mean > 45
         sharp += lap > 60
-        found = _CASCADE.detectMultiScale(gray[: int(h * 0.72)], scaleFactor=1.1, minNeighbors=5,
-                                          minSize=(w // 10, w // 10))
+        found = _find_faces(gray[: int(h * 0.72)])
         if len(found):
             x, y, fw, fh = max(found, key=lambda b: b[2] * b[3])
             inside = x > w * 0.04 and x + fw < w * 0.96
@@ -65,11 +77,11 @@ def assess(clip: Path, hook: str, duration_range=(15, 60)) -> dict:
 
     reasons, score = [], 100.0
     face_frac = faces_ok / max(n, 1)
-    if face_frac < 0.5:
+    if face_frac < 0.35:
         score -= 35; reasons.append(f"person fully in frame only {face_frac:.0%} of the time")
-    elif face_frac < 0.75:
+    elif face_frac < 0.6:
         score -= 12; reasons.append(f"person in frame {face_frac:.0%} of the time")
-    if faces_cut / max(n, 1) > 0.25:
+    if faces_cut / max(n, 1) > 0.3:
         score -= 20; reasons.append("speaker cut off at the frame edge in many shots")
     if bright / max(n, 1) < 0.7:
         score -= 15; reasons.append("dark picture")
