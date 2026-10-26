@@ -277,12 +277,18 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
 
     inputs = ["-i", src.name]
     amap = ["-map", "0:a?"]
-    if music and b["music"] and _has_audio(src):
+    has_audio = _has_audio(src)
+    # Speech is normalised to -14 LUFS (YouTube/Instagram target) so quiet stage mics don't sink the clip.
+    LOUD = "loudnorm=I=-14:TP=-1.5:LRA=11"
+    if music and b["music"] and has_audio:
         inputs += ["-stream_loop", "-1", "-i", str(music)]
         fade_at = max(duration - 1.2, 0)
         graph += (f";[1:a]volume={float(b['music_db']):.1f}dB,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[m];"
-                  f"[0:a]asplit[sp][sc];[m][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=400[md];"
+                  f"[0:a]{LOUD},asplit[sp][sc];[m][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=400[md];"
                   f"[sp][md]amix=inputs=2:duration=first:normalize=0,afade=t=out:st={fade_at:.2f}:d=1.2[a]")
+        amap = ["-map", "[a]"]
+    elif has_audio:
+        graph += f";[0:a]{LOUD}[a]"
         amap = ["-map", "[a]"]
     subprocess.run(
         ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph,
