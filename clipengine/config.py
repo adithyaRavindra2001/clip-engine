@@ -63,6 +63,9 @@ class Creator:
     # Use it to cut stream overlays (chat column, viewer badge, tickers). Per-source entries override it.
     crop: dict = field(default_factory=dict)
     music: bool = True        # set false when the campaign brief forbids music (e.g. FOMO: "no music")
+    # "streamer" = IRL/gaming/reaction content: Claude may put meme sounds (vine boom, fahh, bruh) on the beats.
+    # "podcast" (default) = interviews, panels, informative: punch-in zoom only, never a sound.
+    edit_style: str = "podcast"
     # Short lowercase label used for pack folder names (todays-yt/<date>/<slug>-01/). Default: the name, lowercased.
     slug: str = ""
 

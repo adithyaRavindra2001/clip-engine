@@ -331,7 +331,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
            brand: dict | None = None, music: Path | None = None,
            crop_top: float = 0.0, crop_bottom: float = 0.0, crop_left: float = 0.0, crop_right: float = 0.0,
            beats: list[float] | None = None, sfx_dir: Path | None = None, mood: str = "neutral",
-           seed: int = 0) -> Path:
+           seed: int = 0, sounds: list[str] | None = None) -> Path:
     """`beats` are seconds into the clip where the payoff lands (punchline, reveal); they get an impact."""
     b = {**DEFAULT_BRAND, **(brand or {})}
     L = choose_layout(src, layout, facecam)
@@ -373,7 +373,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
             graph += f";[0:a]{LOUD}[sp]"
             speech = "[sp]"
         if b.get("sfx") and sfx_dir is not None:
-            events = sfxmod.plan(beats or [], duration, mood, bool(hook))
+            events = sfxmod.plan(beats or [], duration, mood, bool(hook), sounds)
             fx_in, fx_graph, n_fx = sfxmod.filter_graph(sfx_dir, events, seed, float(b.get("sfx_db", -9)), n_in)
             if fx_graph:
                 inputs += fx_in

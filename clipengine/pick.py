@@ -32,11 +32,22 @@ audience geography (e.g. 40%+ US/UK/CA/AU), avoid moments centred on other count
 context or tension — this is our original contribution, so make it genuinely useful, not clickbait \
 that the clip doesn't deliver.
 - `beats`: mark 0-2 exact timestamps where the payoff lands (the punchline word, the reveal, the \
-number). A sound effect hits there, so precision matters: use the transcript timestamp of the word \
-itself, at least 1 second after the clip starts and before the last second.
+number). The picture punches in (quick zoom) there, so precision matters: use the transcript timestamp of \
+the word itself, at least 1 second after the clip starts and before the last second.
+- `sounds`: one entry per beat, same order. For STREAMER / reaction content (IRL streams, gaming, chaotic \
+moments) pick the meme sound that edits on TikTok and Shorts would use at that exact moment; for \
+podcasts, interviews and informative content use "none" for every beat. Options:
+    "boom"  — the vine boom: a hard line, a flex, a dead stare, a mic-drop bar, a savage reply
+    "fahh"  — the "FAHHH" yell: someone gets violated, embarrassed, or something outrageous just happened
+    "bruh"  — the "bruh" voice: a fail, a dumb take, an awkward silence
+    "none"  — no sound, just the punch-in
+  Use at most one "fahh" per clip. If unsure, "none" beats a wrong sound.
 - Every clip must be sharp and watchable at full screen: skip moments where the camera is far \
 from the speaker or the shot is a wide stage with no face if a tighter shot of the same point exists.
 """
+
+
+SOUNDS = ("boom", "fahh", "bruh", "none")
 
 
 class Moment(BaseModel):
@@ -51,8 +62,11 @@ class Moment(BaseModel):
                       description="Music mood for the background bed: energetic | tense | funny | emotional | neutral")
     beats: list[float] = Field(default_factory=list,
                                description="0-2 timestamps (absolute seconds, inside start..end) where the payoff "
-                                           "lands: the punchline, the reveal, the number said out loud. A sound "
-                                           "effect hits there. Leave empty if nothing deserves emphasis.")
+                                           "lands: the punchline, the reveal, the number said out loud. The picture "
+                                           "punches in there. Leave empty if nothing deserves emphasis.")
+    sounds: list[str] = Field(default_factory=list,
+                              description="One per beat, same order: boom | fahh | bruh | none. Meme sound for "
+                                          "streamer/reaction clips only; 'none' for podcasts and informative clips.")
 
 
 class Picks(BaseModel):
@@ -116,6 +130,9 @@ def pick_moments(cfg: Config, db, creator: Creator, title: str, segments: list[d
     style = cfg.style_guide_path.read_text() if cfg.style_guide_path.exists() else ""
 
     context = [f"Creator: {creator.name} ({creator.platform})", f"Video title: {title}"]
+    context.append(f"Content type: {creator.edit_style} "
+                   + ("(streamer/reaction: meme sounds on the beats are welcome)" if creator.edit_style == "streamer"
+                      else "(podcast/informative: every sound must be \"none\")"))
     if creator.campaign_rules:
         context.append(f"Campaign rules:\n{creator.campaign_rules}")
     if hotspots:
@@ -179,7 +196,10 @@ def snap(moments: list[Moment], segments: list[dict], min_s: float, max_s: float
             m.end = m.start + max_s
         if m.end - m.start < min_s:
             continue
-        m.beats = sorted(b for b in m.beats if m.start + 0.8 < b < m.end - 0.4)[:2]
+        pairs = sorted((b, (m.sounds[i] if i < len(m.sounds) else "none"))
+                       for i, b in enumerate(m.beats) if m.start + 0.8 < b < m.end - 0.4)[:2]
+        m.beats = [b for b, _ in pairs]
+        m.sounds = [snd if snd in SOUNDS else "none" for _, snd in pairs]
         if any(m.start < o.end and o.start < m.end for o in out):
             continue
         if any(m.start < e and s < m.end for s, e in taken):

@@ -28,7 +28,9 @@ Output ONLY a JSON object of the form {\"moments\": [...]} matching the ANSWER F
 No prose, no markdown fences. Every caption must satisfy the campaign rules in the request (required tags/mentions).
 Set \"mood\" on each moment to one of: energetic, tense, funny, emotional, neutral.
 Set \"beats\" on each moment: 0-2 absolute transcript timestamps (seconds) where the payoff word lands (punchline, reveal,
-the number) — a sound effect hits there, so use the exact word timestamp, at least 1s after start and before the last second.
+the number) — the picture punches in there, so use the exact word timestamp, at least 1s after start and before the last second.
+Set \"sounds\" to one entry per beat (same order): boom | fahh | bruh | none, following the rules in the request. Streamer /
+reaction content gets the meme sound an editor would use at that exact moment; podcasts and informative content get \"none\".
 
 $(cat "$req")" > "$dir/picks.raw" 2>>data/daily.log
       python - "$dir" <<'PY' && break

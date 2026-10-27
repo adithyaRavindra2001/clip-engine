@@ -4,8 +4,10 @@ All sounds are synthesised here with ffmpeg (filtered noise and sine sweeps), so
 royalty-free by construction and never trigger Content ID. Drop your own .wav/.mp3 files into
 sfx/<name>/ to override any of them; the synthesised versions are only written when a folder is empty.
 
-    sfx/whoosh/   hook entrance (t = 0)                 short airy sweep
-    sfx/impact/   each `beat` Claude marks               low thump + click
+    sfx/boom/     vine boom — hard line, flex, dead stare (Claude picks per beat)
+    sfx/fahh/     "FAHHH" — someone got violated / outrageous moment
+    sfx/bruh/     "bruh" — fail, dumb take, awkward silence
+    sfx/whoosh/, sfx/impact/, sfx/pop/   spare Mixkit samples, not placed automatically
 Real royalty-free samples (Mixkit Sound Effects Free License) live in sfx/whoosh and sfx/impact; the
 synthesised fallbacks below are only generated when a folder is empty.
 """
@@ -62,22 +64,22 @@ def pick(sfx_dir: Path, name: str, seed: int) -> Path | None:
     return cands[seed % len(cands)] if cands else None
 
 
-def plan(beats: list[float], duration: float, mood: str, hook: bool) -> list[tuple[str, float]]:
-    """(sound, time-in-clip) pairs. Few and deliberate: one whoosh, at most two impacts, one riser."""
+def plan(beats: list[float], duration: float, mood: str, hook: bool,
+         sounds: list[str] | None = None) -> list[tuple[str, float]]:
+    """(sound, time-in-clip) pairs, straight from the picker's per-beat choice (boom | fahh | bruh | none).
+    Every sound lands on a punch-in zoom at the same instant, so it always has a visible cause. Nothing is
+    added on its own: no hook whoosh, no risers, no bells (tried 2026-10-27, felt random)."""
     ev: list[tuple[str, float]] = []
-    if hook:
-        ev.append(("whoosh", 0.0))
-    # Impacts land exactly on the punch-in zoom (render.punch_in_filter uses the same beat times), so the
-    # sound always has a visible cause. Risers and bells were tried and dropped: with no visual cue they
-    # felt random to the viewer.
-    kept = sorted(b for b in beats if 0.8 < b < duration - 0.4)[:2]
-    for b in kept:
-        ev.append(("impact", b))
+    kept = sorted((b, (sounds[i] if sounds and i < len(sounds) else "none"))
+                  for i, b in enumerate(beats) if 0.8 < b < duration - 0.4)[:2]
+    for b, name in kept:
+        if name and name != "none":
+            ev.append((name, b))
     return ev
 
 
 # Per-sound trim relative to `sfx_db`: the whoosh is texture under the hook, the impact must be felt.
-GAIN = {"whoosh": -5.0, "impact": 0.0, "pop": -3.0}
+GAIN = {"boom": 0.0, "fahh": -2.0, "bruh": -2.0, "whoosh": -5.0, "impact": 0.0, "pop": -3.0}
 
 
 def filter_graph(sfx_dir: Path, events: list[tuple[str, float]], seed: int, level_db: float,

@@ -82,17 +82,19 @@ def process(cfg: Config, db, source: str, creator_name: str,
                 out = render.render(src, clip_dir / "clip.mp4", words, m.start, m.hook,
                                     creator.layout, creator.facecam, brand=cfg["brand"],
                                     music=render.choose_music(cfg.music_dir, m.mood, video_id * 100 + n) if creator.music else None,
-                                    beats=[b - m.start for b in m.beats], sfx_dir=cfg.sfx_dir, mood=m.mood,
-                                    seed=video_id * 100 + n, **creator.source_options(source))
+                                    beats=[b - m.start for b in m.beats],
+                                    sounds=m.sounds if creator.edit_style == "streamer" else [],  # podcasts: zoom only
+                                    sfx_dir=cfg.sfx_dir,
+                                    mood=m.mood, seed=video_id * 100 + n, **creator.source_options(source))
             except Exception as e:
                 print(f"    [warn] clip {n} failed: {e}")
                 shutil.rmtree(clip_dir, ignore_errors=True)
                 continue
             db.execute(
-                "INSERT INTO clips(video_id, start, end, title, hook, caption, why, score, path, mood, beats) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO clips(video_id, start, end, title, hook, caption, why, score, path, mood, beats, sounds) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (video_id, m.start, m.end, m.title, m.hook, m.caption, m.why, m.score, str(out), m.mood,
-                 json.dumps(m.beats)))
+                 json.dumps(m.beats), json.dumps(m.sounds)))
             db.commit()
             made += 1
             print(f"    ✓ [{m.score}] {m.title}")
@@ -129,12 +131,15 @@ def rerender(cfg: Config, db, clip_id: int, hook: str, trim_start: float = 0.0, 
         trimmed.replace(src)
     n = int(clip_dir.name.rsplit("-", 1)[-1])
     beats = json.loads(row["beats"] or "[]") if "beats" in row.keys() else []
+    sounds = json.loads(row["sounds"] or "[]") if "sounds" in row.keys() else []
+    if not creator or creator.edit_style != "streamer":
+        sounds = []  # meme sounds are for streamer content only
     render.render(src, clip_dir / "clip.mp4", transcribe.words_between(segments, start, end), start, hook,
                   creator.layout if creator else "auto", creator.facecam if creator else None,
                   brand=cfg["brand"],
                   music=(render.choose_music(cfg.music_dir, row["mood"] or "neutral", row["video_id"] * 100 + n)
                          if creator and creator.music else None),
-                  beats=[b - start for b in beats], sfx_dir=cfg.sfx_dir, mood=row["mood"] or "neutral",
+                  beats=[b - start for b in beats], sounds=sounds, sfx_dir=cfg.sfx_dir, mood=row["mood"] or "neutral",
                   seed=row["video_id"] * 100 + n,
                   **(creator.source_options(row["url"]) if creator else {}))
     db.execute("UPDATE clips SET hook = ?, start = ?, end = ? WHERE id = ?", (hook, start, end, clip_id))
