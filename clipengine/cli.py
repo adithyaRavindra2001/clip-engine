@@ -8,6 +8,7 @@
   clip login                     open the automation Chrome profile to sign in once
   clip tally                     everything published so far (tally/uploads.csv)
   clip reconcile                 safety net: submit public videos missing on Content Rewards
+  clip campaigns                 keep 5 campaigns live: budgets, discovery, Claude ranking, auto-join + onboard
   clip posted NAME URL           log a clip you uploaded by hand
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
@@ -20,7 +21,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import discover, learn, morning, pipeline, review, store, uploader
+from . import campaigns, discover, learn, morning, pipeline, review, store, uploader
 from .config import Config
 
 
@@ -98,6 +99,10 @@ def cmd_upload(cfg, db, args):
 
 def cmd_login(cfg, db, args):
     uploader.login(cfg)
+
+
+def cmd_campaigns(cfg, db, args):
+    campaigns.run(cfg, db, min_active=args.min_active, auto_join=args.auto_join, dry_run=args.dry_run)
 
 
 def cmd_reconcile(cfg, db, args):
@@ -179,6 +184,12 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("login", help="open the automation Chrome profile to sign in to YouTube + Content Rewards").set_defaults(fn=cmd_login)
 
     sub.add_parser("tally", help="list everything published (tally/uploads.csv)").set_defaults(fn=cmd_tally)
+
+    ca = sub.add_parser("campaigns", help="check active campaigns' budgets, rank new ones, optionally auto-join to keep N live")
+    ca.add_argument("--min-active", type=int, default=5)
+    ca.add_argument("--auto-join", action="store_true", help="join the best new campaigns until --min-active are live and onboard them")
+    ca.add_argument("--dry-run", action="store_true", help="report only; never mark ended, never join")
+    ca.set_defaults(fn=cmd_campaigns)
 
     rc = sub.add_parser("reconcile", help="submit any public YouTube video that is missing on Content Rewards (30-min window)")
     rc.add_argument("--dry-run", action="store_true")

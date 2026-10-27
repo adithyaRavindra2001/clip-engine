@@ -317,26 +317,42 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
         # Read the dialog's own checklist so the reason is in the log (linked account / already submitted / 30 min).
         dlg = page.locator("[role=dialog]").first.inner_text() if page.locator("[role=dialog]").count() else page.inner_text("body")
         raise RuntimeError("Submit button stayed disabled; dialog says: " + " | ".join(l.strip() for l in dlg.splitlines() if l.strip())[:300])
-    confirm.click()
-    # Wait for the request to finish: the site verifies ownership and posting time with YouTube, which can
-    # take a while right after publishing. Never navigate away while the page still says "Submitting".
-    t0 = time.time()
-    while time.time() - t0 < 180:
-        try:
-            if not re.search(r"submitting", page.inner_text("body"), re.I):
-                break
-        except Exception:
-            break
-        time.sleep(2)
-    else:
+    def _wait_not_submitting(limit_s: int = 180) -> None:
+        t0 = time.time()
+        while time.time() - t0 < limit_s:
+            try:
+                if not re.search(r"submitting", page.inner_text("body"), re.I):
+                    return
+            except Exception:
+                return
+            time.sleep(2)
         _debug(page, "submit-hung", cfg)
         raise RuntimeError("Content Rewards stayed on 'Submitting…' for 3 minutes; will retry on the next run")
+
+    # YouTube can take a few minutes to expose the publish time; the site then says
+    # "We couldn't confirm exactly when this post went live. Try again in a few minutes." So: retry in place.
+    for attempt in range(1, 9):
+        confirm.click()
+        _wait_not_submitting()
+        _sleep(1.0, 2.0)
+        body = page.inner_text("body")
+        if not re.search(r"couldn't confirm|could not confirm|try again in a few", body, re.I):
+            break
+        print(f"    site can't see the publish time yet (attempt {attempt}); retrying in ~75 s", flush=True)
+        _sleep(60, 90)
+        confirm = page.get_by_role("button", name=re.compile(r"^(submit|confirm|submit (clip|content|post|link))$", re.I)).last
+    else:
+        _debug(page, "submit-unconfirmed", cfg)
+        raise RuntimeError("Content Rewards could not confirm the post time after 8 tries")
     _sleep(1.5, 2.5)
     _debug(page, "after-submit", cfg)   # always keep a picture of what the site said
     # The only reliable success signal: the video now appears on the Submissions page.
     vid = re.search(r"(?:v=|/shorts/|youtu\.be/)([\w-]{11})", short_url).group(1)
-    if vid not in cr_submissions(page):
-        raise RuntimeError("submitted, but the clip is not on the Submissions page afterwards")
+    for attempt in range(4):   # the Submissions list can lag a few seconds behind the submit
+        if vid in cr_submissions(page):
+            return
+        time.sleep(8)
+    raise RuntimeError("submitted, but the clip is not on the Submissions page afterwards")
 
 
 # ---------- tally ----------
@@ -585,7 +601,12 @@ def reconcile(cfg: Config, db, dry_run: bool = False, window_min: int = 30, forc
         videos = channel_videos(cfg, channel)
         submitted = cr_submissions(page)
         print(f"channel {channel}: {len(videos)} public video(s); Content Rewards has {len(submitted)} submission(s)")
-        missing = [v for v in videos if v["id"] not in submitted]
+        # The Submissions page lists only the newest ~20; anything older than 2 days is past every campaign's
+        # posting window anyway, so only recent videos are compared.
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        recent = [v for v in videos if (v["published_at"] or "") >= cutoff]
+        missing = [v for v in recent if v["id"] not in submitted]
         if not missing:
             print("all public videos are submitted")
             return
