@@ -9,7 +9,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from . import sfx as sfxmod
+
 OUT_W, OUT_H = 1080, 1920
+# Final encode: visually lossless for a Short. YouTube re-encodes everything, so what we upload must be
+# the cleanest possible master: CRF 17, slow preset, High profile, Lanczos scaling, 192k AAC.
+ENCODE = ["-c:v", "libx264", "-preset", "slow", "-crf", "17", "-profile:v", "high", "-level", "4.2",
+          "-pix_fmt", "yuv420p", "-g", "60", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+          "-movflags", "+faststart"]
+SCALE = "flags=lanczos"
 TOP_H = 640  # facecam panel height in split layout
 
 
@@ -64,12 +72,41 @@ def _region_sharpness(path: Path, cam: tuple, samples: int = 4) -> float:
     return float(np.median(vals)) if vals else 0.0
 
 
+def mean_luma(path: Path, samples: int = 8) -> float:
+    """Average Y (0-255) over a few frames; used to lift dark stage footage automatically."""
+    cap = cv2.VideoCapture(str(path))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+    vals = []
+    for i in range(samples):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * (i + 0.5) / samples))
+        ok, frame = cap.read()
+        if ok:
+            vals.append(float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()))
+    cap.release()
+    return float(np.median(vals)) if vals else 128.0
+
+
+def light_filter(path: Path) -> str:
+    """A gentle gamma lift for dark pictures (mean luma under 60): faces come up, blacks stay black.
+    Returns '' when the picture is fine."""
+    y = mean_luma(path)
+    if y >= 60:
+        return ""
+    gamma = min(1.4, 1.0 + (60 - y) / 50)
+    return f"eq=gamma={gamma:.2f}:contrast=1.05:saturation=1.06,"
+
+
+def _with_light(graph: str, path: Path) -> str:
+    lf = light_filter(path)
+    return graph.replace("[0:v]", "[0:v]" + lf, 1) if lf else graph
+
+
 def frame_at(src: Path, t: float, layout: str = "auto", facecam: list[float] | None = None,
              crop_top: float = 0.0, crop_bottom: float = 0.0):
     """One 1080x1920 frame from the ORIGINAL source at time t, laid out exactly like the clip but
     without captions or hook, as a BGR array. Used for clean thumbnails."""
     L = choose_layout(src, layout, facecam)
-    graph = video_filter(L, crop_top, crop_bottom) + ";[base]null[v]"
+    graph = _with_light(video_filter(L, crop_top, crop_bottom), src) + ";[base]null[v]"
     out = subprocess.run(
         ["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(src), "-filter_complex", graph, "-map", "[v]",
          "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True, check=True).stdout
@@ -120,7 +157,7 @@ def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0) -> st
         ch = _even(H * (1 - crop_top - crop_bottom))
         cw = min(_even(ch * OUT_W / OUT_H), _even(W))
         x = _even(min(max(L["cx"] - cw / 2, 0), W - cw))
-        return f"[0:v]crop={cw}:{ch}:{x}:{y0},scale={OUT_W}:{OUT_H},setsar=1[base]"
+        return f"[0:v]crop={cw}:{ch}:{x}:{y0},scale={OUT_W}:{OUT_H}:{SCALE},setsar=1[base]"
 
     # split: facecam on top, centre of gameplay below
     fx, fy, fw, fh = L["cam"]
@@ -137,8 +174,8 @@ def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0) -> st
     gx = _even((W - gw) / 2)
     return (
         f"[0:v]split=2[a][b];"
-        f"[a]crop={_even(fw)}:{_even(fh)}:{_even(fx)}:{_even(fy)},scale={OUT_W}:{TOP_H},setsar=1[top];"
-        f"[b]crop={gw}:{_even(H)}:{gx}:0,scale={OUT_W}:{bot_h},setsar=1[bot];"
+        f"[a]crop={_even(fw)}:{_even(fh)}:{_even(fx)}:{_even(fy)},scale={OUT_W}:{TOP_H}:{SCALE},setsar=1[top];"
+        f"[b]crop={gw}:{_even(H)}:{gx}:0,scale={OUT_W}:{bot_h}:{SCALE},setsar=1[bot];"
         f"[top][bot]vstack=inputs=2[base]"
     )
 
@@ -166,6 +203,8 @@ DEFAULT_BRAND = {
     "progress_bar": True,    # thin bar along the bottom edge that fills over the clip
     "music": True,           # mix a quiet bed from music/<mood>/ under the speech (skipped if no files)
     "music_db": -22,         # music level relative to full scale; speech ducks it further
+    "sfx": True,             # whoosh on the hook, impact on the beats Claude marks (sfx/ folder, synthesised if empty)
+    "sfx_db": -9,            # effects level (sounds are peak-normalised to -1 dBFS)
 }
 AUDIO_EXT = (".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac")
 
@@ -258,7 +297,10 @@ def _has_audio(path: Path) -> bool:
 def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
            layout: str = "auto", facecam: list[float] | None = None,
            brand: dict | None = None, music: Path | None = None,
-           crop_top: float = 0.0, crop_bottom: float = 0.0) -> Path:
+           crop_top: float = 0.0, crop_bottom: float = 0.0,
+           beats: list[float] | None = None, sfx_dir: Path | None = None, mood: str = "neutral",
+           seed: int = 0) -> Path:
+    """`beats` are seconds into the clip where the payoff lands (punchline, reveal); they get an impact."""
     b = {**DEFAULT_BRAND, **(brand or {})}
     L = choose_layout(src, layout, facecam)
     duration = float(subprocess.run(
@@ -268,7 +310,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
                              accent=b["accent"], hook_animation=b["hook_animation"]))
 
-    graph = video_filter(L, crop_top, crop_bottom) + f";[base]subtitles={ass.name}[s]"
+    graph = _with_light(video_filter(L, crop_top, crop_bottom), src) + f";[base]subtitles={ass.name}[s]"
     if b["progress_bar"]:
         graph += (f";[s]drawbox=x=0:y=ih-14:w='iw*min(t/{duration:.3f},1)':h=14:"
                   f"color={_ff_colour(b['accent'])}@0.9:t=fill[v]")
@@ -280,19 +322,36 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     has_audio = _has_audio(src)
     # Speech is normalised to -14 LUFS (YouTube/Instagram target) so quiet stage mics don't sink the clip.
     LOUD = "loudnorm=I=-14:TP=-1.5:LRA=11"
-    if music and b["music"] and has_audio:
-        inputs += ["-stream_loop", "-1", "-i", str(music)]
-        fade_at = max(duration - 1.2, 0)
-        graph += (f";[1:a]volume={float(b['music_db']):.1f}dB,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[m];"
-                  f"[0:a]{LOUD},asplit[sp][sc];[m][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=400[md];"
-                  f"[sp][md]amix=inputs=2:duration=first:normalize=0,afade=t=out:st={fade_at:.2f}:d=1.2[a]")
-        amap = ["-map", "[a]"]
-    elif has_audio:
-        graph += f";[0:a]{LOUD}[a]"
+    n_in = 1
+    stems: list[str] = []   # audio labels to sum with the speech
+    if has_audio:
+        if music and b["music"]:
+            inputs += ["-stream_loop", "-1", "-i", str(music)]
+            graph += (f";[{n_in}:a]volume={float(b['music_db']):.1f}dB,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[m];"
+                      f"[0:a]{LOUD},asplit[sp][sc];[m][sc]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=400[md]")
+            stems.append("[md]")
+            n_in += 1
+            speech = "[sp]"
+        else:
+            graph += f";[0:a]{LOUD}[sp]"
+            speech = "[sp]"
+        if b.get("sfx") and sfx_dir is not None:
+            events = sfxmod.plan(beats or [], duration, mood, bool(hook))
+            fx_in, fx_graph, n_fx = sfxmod.filter_graph(sfx_dir, events, seed, float(b.get("sfx_db", -9)), n_in)
+            if fx_graph:
+                inputs += fx_in
+                graph += ";" + fx_graph
+                stems.append("[sfx]")
+                n_in += n_fx
+        if stems:
+            fade_at = max(duration - 1.2, 0)
+            graph += (f";{speech}{''.join(stems)}amix=inputs={1 + len(stems)}:duration=first:normalize=0,"
+                      f"atrim=0:{duration:.3f},afade=t=out:st={fade_at:.2f}:d=1.2,alimiter=limit=0.97[a]")
+        else:
+            graph += f";{speech}anull[a]"
         amap = ["-map", "[a]"]
     subprocess.run(
         ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph,
-         "-map", "[v]", *amap, "-c:v", "libx264", "-preset", "medium", "-crf", "20",
-         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out.name],
+         "-map", "[v]", *amap, *ENCODE, out.name],
         cwd=src.parent, check=True)
     return out

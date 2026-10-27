@@ -14,3 +14,5 @@ music/**/*.aac
 music/**/*.ogg
 music/**/*.flac
 todays-yt/
+sfx/**/*.wav
+sfx/**/*.mp3

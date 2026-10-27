@@ -41,11 +41,19 @@ def connect(data_dir: Path) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
     cols = [r[1] for r in db.execute("PRAGMA table_info(clips)")]
-    for col, ddl in (("mood", "TEXT DEFAULT 'neutral'"), ("qa", "INTEGER"), ("qa_reasons", "TEXT")):
+    for col, ddl in (("mood", "TEXT DEFAULT 'neutral'"), ("qa", "INTEGER"), ("qa_reasons", "TEXT"),
+                     ("beats", "TEXT DEFAULT '[]'")):
         if col not in cols:
             db.execute(f"ALTER TABLE clips ADD COLUMN {col} {ddl}")
     db.commit()
     return db
+
+
+def pending_count(db: sqlite3.Connection, creator: str) -> int:
+    """Unreviewed drafts in stock for a campaign; daily skips cutting more when there are plenty."""
+    row = db.execute("SELECT COUNT(*) n FROM clips c JOIN videos v ON v.id = c.video_id "
+                     "WHERE v.creator = ? AND c.status = 'pending'", (creator,)).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def video_seen(db: sqlite3.Connection, url: str) -> bool:

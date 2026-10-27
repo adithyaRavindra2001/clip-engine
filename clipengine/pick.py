@@ -31,6 +31,11 @@ audience geography (e.g. 40%+ US/UK/CA/AU), avoid moments centred on other count
 - The hook text is on-screen text in the clip's first seconds: max 8 words, punchy, adds \
 context or tension — this is our original contribution, so make it genuinely useful, not clickbait \
 that the clip doesn't deliver.
+- `beats`: mark 0-2 exact timestamps where the payoff lands (the punchline word, the reveal, the \
+number). A sound effect hits there, so precision matters: use the transcript timestamp of the word \
+itself, at least 1 second after the clip starts and before the last second.
+- Every clip must be sharp and watchable at full screen: skip moments where the camera is far \
+from the speaker or the shot is a wide stage with no face if a tighter shot of the same point exists.
 """
 
 
@@ -44,6 +49,10 @@ class Moment(BaseModel):
     why: str = Field(description="One sentence: why this will perform")
     mood: str = Field(default="neutral",
                       description="Music mood for the background bed: energetic | tense | funny | emotional | neutral")
+    beats: list[float] = Field(default_factory=list,
+                               description="0-2 timestamps (absolute seconds, inside start..end) where the payoff "
+                                           "lands: the punchline, the reveal, the number said out loud. A sound "
+                                           "effect hits there. Leave empty if nothing deserves emphasis.")
 
 
 class Picks(BaseModel):
@@ -165,6 +174,7 @@ def snap(moments: list[Moment], segments: list[dict], min_s: float, max_s: float
             m.end = m.start + max_s
         if m.end - m.start < min_s:
             continue
+        m.beats = sorted(b for b in m.beats if m.start + 0.8 < b < m.end - 0.4)[:2]
         if any(m.start < o.end and o.start < m.end for o in out):
             continue
         if any(m.start < e and s < m.end for s, e in taken):

@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 from . import qa
-from .config import Config
+from .config import Config, Creator
 
 GENERIC_TAGS = ["#shorts"]
 
@@ -37,9 +37,12 @@ def hashtags(caption: str, creator) -> list[str]:
 
 
 def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int = 60,
-          per_video: int = 3) -> Path:
+          per_video: int | None = None, only: str | None = None) -> Path:
+    """`limit` is PER CAMPAIGN: every allowed campaign with pending clips gets up to `limit` of its best.
+    Running twice on the same day APPENDS (vid numbering continues), so campaigns can be packed in stages."""
     day = day or date.today().isoformat()
     root = cfg.root / "todays-yt" / day
+    per_video = per_video or limit
     rows = db.execute(
         "SELECT c.*, v.creator, v.url FROM clips c JOIN videos v ON v.id = c.video_id "
         "WHERE c.status = 'pending' ORDER BY c.score DESC").fetchall()
@@ -47,6 +50,8 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
     for r in rows:
         clip = Path(r["path"])
         creator = cfg.creator(r["creator"])
+        if only and (not creator or creator.name.lower() != only.lower()):
+            continue
         # Only campaign clips go out: never test material, never anyone without permission.
         if not clip.exists() or not creator or not creator.allowed or "TEST ONLY" in (creator.permission or ""):
             continue
@@ -57,23 +62,44 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
     db.commit()
 
     ranked = sorted(assessed, key=lambda t: -(0.6 * t[0]["score"] + 0.4 * t[1]["qa"]))
-    chosen, per_src = [], {}
+    chosen, per_src, per_campaign = [], {}, {}
     for r, res in ranked:
         if res["qa"] < min_qa:
             db.execute("UPDATE clips SET status='rejected', reason=?, decided_at=CURRENT_TIMESTAMP WHERE id=?",
                        ("auto-QA: " + "; ".join(res["reasons"]), r["id"]))
             continue
+        if per_campaign.get(r["creator"], 0) >= limit:
+            continue
         if per_src.get(r["video_id"], 0) >= per_video:
             continue  # spread across sources so a day isn't one stage four times
-        chosen.append((r, res)); per_src[r["video_id"]] = per_src.get(r["video_id"], 0) + 1
-        if len(chosen) >= limit:
-            break
+        chosen.append((r, res))
+        per_src[r["video_id"]] = per_src.get(r["video_id"], 0) + 1
+        per_campaign[r["creator"]] = per_campaign.get(r["creator"], 0) + 1
     db.commit()
+    # Best-paying campaign first in the upload order; within a campaign, best clip first.
+    chosen.sort(key=lambda t: (-(cfg.creator(t[0]["creator"]).cpm if cfg.creator(t[0]["creator"]) else 0),
+                               t[0]["creator"], -(0.6 * t[0]["score"] + 0.4 * t[1]["qa"])))
 
     root.mkdir(parents=True, exist_ok=True)
-    summary = [f"TODAY'S UPLOADS — {day}", "", "Upload in this order, one every 1-2 hours. Copy TITLE and DESCRIPTION from each info.txt.", ""]
-    for n, (r, res) in enumerate(chosen, 1):
+    existing = sorted(int(p.name[3:]) for p in root.glob("vid*") if p.is_dir() and p.name[3:].isdigit())
+    start_n = (existing[-1] if existing else 0) + 1
+    summary = [f"TODAY'S UPLOADS — {day}", "",
+               "Upload in this order, spaced through the evening. Copy TITLE and DESCRIPTION from each info.txt.",
+               "Submit every URL on its campaign page right after posting (Reach campaigns: within 30 minutes).", ""]
+    if existing:
+        summary = ["", f"=== added later ({len(existing)} clips already packed above) ===", ""]
+    pending_rules = sorted({r["creator"] for r, _ in chosen
+                            if "PENDING" in ((cfg.creator(r["creator"]) or Creator("", "", "", "")).campaign_rules or "")})
+    if pending_rules:
+        summary += ["!! RULES NOT YET CONFIRMED for: " + ", ".join(pending_rules)
+                    + ". Open each campaign's reference files on Content Rewards and check the caption rules "
+                      "(required mentions/hashtags) before posting these.", ""]
+    last_campaign = None
+    for n, (r, res) in enumerate(chosen, start_n):
         creator = cfg.creator(r["creator"])
+        if r["creator"] != last_campaign:
+            summary.append(f"--- {r['creator']} (${creator.cpm:.2f} per 1K views) ---")
+            last_campaign = r["creator"]
         folder = root / f"vid{n}"
         folder.mkdir(exist_ok=True)
         shutil.copy2(r["path"], folder / "vid.mp4")
@@ -89,8 +115,13 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
             if t not in desc:
                 desc += f" {t}"
         submit = creator.permission if creator else ""
+        warn = ""
+        if creator and "PENDING" in (creator.campaign_rules or ""):
+            warn = ("!! CAMPAIGN RULES NOT CONFIRMED: open this campaign's reference files on Content Rewards and check "
+                    "the required mention/hashtag before posting. Add anything missing to the description.\n\n")
         (folder / "info.txt").write_text(
-            f"TITLE:\n{r['title']}\n\n"
+            warn
+            + f"TITLE:\n{r['title']}\n\n"
             f"DESCRIPTION (paste as is):\n{desc}\n\n"
             f"HASHTAGS:\n{' '.join(tags)}\n\n"
             f"ON-SCREEN HOOK: {r['hook']}\n"
@@ -100,8 +131,7 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
             f"SOURCE: {r['url']} @ {r['start']:.0f}s-{r['end']:.0f}s\n\n"
             "UPLOAD:\n"
             "- YouTube Studio > Create > Upload > vid.mp4. Title + description from above. Not for kids. Public.\n"
-            "- Instagram Reels: same caption; tag the brand account on the post if the campaign requires it.\n"
-            "- Then submit the post URL on the campaign page (link above).\n"
+            "- Copy the Short's URL and submit it on the campaign page (link above) straight away.\n"
             "- Paste the URL into the review page's Approved tab so views get tracked.\n")
         db.execute("UPDATE clips SET status='approved', reason='auto-selected for morning pack', decided_at=CURRENT_TIMESTAMP WHERE id=?", (r["id"],))
         summary.append(f"vid{n}: {r['title']}  [score {r['score']}, QA {res['qa']}, {res['duration']}s]  — {r['why']}")
@@ -109,5 +139,7 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
     left = [t for t in ranked if t[1]["qa"] >= min_qa and t[0]["id"] not in {c[0]["id"] for c in chosen}]
     summary += ["", f"{len(chosen)} selected, {len(left)} good clips held for tomorrow, "
                 f"{sum(1 for _, res in assessed if res['qa'] < min_qa)} rejected by QA."]
-    (root / "SUMMARY.txt").write_text("\n".join(summary) + "\n")
+    sp = root / "SUMMARY.txt"
+    prev = sp.read_text() if (existing and sp.exists()) else ""
+    sp.write_text(prev + "\n".join(summary) + "\n")
     return root

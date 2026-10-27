@@ -25,35 +25,47 @@ def cmd_run(cfg, db, args):
 
 
 def cmd_daily(cfg, db, args):
-    total, budget = 0, args.max_videos
+    """Every allowed campaign, every day: `--max-videos` is per campaign. Campaigns that already hold plenty of
+    unreviewed drafts (morning.per_campaign x morning.stock_factor) are skipped so the queue stays fresh."""
+    total = 0
+    m = cfg["morning"]
+    enough = int(m["per_campaign"]) * int(m["stock_factor"])
+    creators = sorted([c for c in cfg.creators() if c.allowed and "TEST ONLY" not in (c.permission or "")],
+                      key=lambda c: -c.cpm)
     # 1. Campaigns with fixed footage: cut NEW moments from the least-used source, best-paying campaign first.
-    fixed = sorted([c for c in cfg.creators() if c.allowed and c.sources], key=lambda c: -c.cpm)
-    for c in fixed:
-        if budget <= 0:
-            break
-        src = min(c.source_urls, key=lambda u: store.clip_count(db, u))
-        print(f"{c.name} (${c.cpm:.2f} CPM): cutting new moments from {src}")
-        try:
-            total += pipeline.process(cfg, db, src, c.name, force=True)
-            budget -= 1
-        except SystemExit as e:
-            print(f"  [waiting] {e}")
-            budget -= 1
-        except Exception as e:
-            print(f"  [error] {src}: {e}")
-    # 2. Everyone else: discover fresh uploads.
-    if budget > 0:
-        print("Discovering fresh VODs from allowed creators…")
-        vods = discover.fresh_vods(cfg)
-        new = [v for v in vods if not store.video_seen(db, v.url)][:budget]
-        print(f"{len(vods)} recent VODs found, {len(new)} new to process.")
-        for v in new:
+    for c in [c for c in creators if c.sources]:
+        stock = store.pending_count(db, c.name)
+        if stock >= enough:
+            print(f"{c.name}: {stock} drafts in stock, skipping today's cut")
+            continue
+        for _ in range(args.max_videos):
+            src = min(c.source_urls, key=lambda u: store.clip_count(db, u))
+            print(f"{c.name} (${c.cpm:.2f} CPM): cutting new moments from {src}")
             try:
-                total += pipeline.process(cfg, db, v.url, v.creator, twitch_hotspots=v.hotspots)
+                total += pipeline.process(cfg, db, src, c.name, force=True)
             except SystemExit as e:
                 print(f"  [waiting] {e}")
             except Exception as e:
-                print(f"  [error] {v.url}: {e}")
+                print(f"  [error] {src}: {e}")
+    # 2. Everyone else: discover fresh uploads from their channels.
+    rest = [c for c in creators if not c.sources]
+    if rest:
+        print("Discovering fresh VODs from allowed creators…")
+        vods = discover.fresh_vods(cfg)
+        for c in rest:
+            stock = store.pending_count(db, c.name)
+            if stock >= enough:
+                print(f"{c.name}: {stock} drafts in stock, skipping today's cut")
+                continue
+            new = [v for v in vods if v.creator == c.name and not store.video_seen(db, v.url)][:args.max_videos]
+            print(f"{c.name}: {len(new)} new VOD(s) to process.")
+            for v in new:
+                try:
+                    total += pipeline.process(cfg, db, v.url, v.creator, twitch_hotspots=v.hotspots)
+                except SystemExit as e:
+                    print(f"  [waiting] {e}")
+                except Exception as e:
+                    print(f"  [error] {v.url}: {e}")
     if not args.no_prospects:
         cmd_discover(cfg, db, args)
     print(f"\nDone: {total} new draft clips. Review them with: clip review")
@@ -68,7 +80,9 @@ def cmd_discover(cfg, db, args):
 
 
 def cmd_morning(cfg, db, args):
-    root = morning.build(cfg, db, args.date, limit=args.limit, min_qa=args.min_qa)
+    m = cfg["morning"]
+    root = morning.build(cfg, db, args.date, limit=args.limit or int(m["per_campaign"]),
+                         min_qa=args.min_qa or int(m["min_qa"]), only=args.creator)
     print((root / "SUMMARY.txt").read_text())
     print(f"Pack: {root}")
 
@@ -114,8 +128,9 @@ def main(argv: list[str] | None = None) -> None:
 
     m = sub.add_parser("morning", help="auto-select today's best clips into todays-yt/<date>/vidN/ with info.txt + thumbnail")
     m.add_argument("--date", default=None)
-    m.add_argument("--limit", type=int, default=5)
-    m.add_argument("--min-qa", type=int, default=60)
+    m.add_argument("--limit", type=int, default=None, help="clips PER CAMPAIGN (default: morning.per_campaign)")
+    m.add_argument("--min-qa", type=int, default=None)
+    m.add_argument("--creator", default=None, help="pack only this campaign (appends to today's folder)")
     m.set_defaults(fn=cmd_morning)
 
     v = sub.add_parser("review", help="open the review page")

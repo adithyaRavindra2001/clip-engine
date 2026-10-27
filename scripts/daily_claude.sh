@@ -27,6 +27,8 @@ answer_pending() {
 Output ONLY a JSON object of the form {\"moments\": [...]} matching the ANSWER FORMAT schema at the end.
 No prose, no markdown fences. Every caption must satisfy the campaign rules in the request (required tags/mentions).
 Set \"mood\" on each moment to one of: energetic, tense, funny, emotional, neutral.
+Set \"beats\" on each moment: 0-2 absolute transcript timestamps (seconds) where the payoff word lands (punchline, reveal,
+the number) — a sound effect hits there, so use the exact word timestamp, at least 1s after start and before the last second.
 
 $(cat "$req")" > "$dir/picks.raw" 2>>data/daily.log
       python - "$dir" <<'PY' && break
@@ -51,5 +53,5 @@ PY
 clip daily --max-videos "$MAX_VIDEOS" --no-prospects
 answer_pending
 clip daily --max-videos "$MAX_VIDEOS"
-clip morning --limit "${MORNING_LIMIT:-5}"
+clip morning ${MORNING_LIMIT:+--limit "$MORNING_LIMIT"}   # per campaign; default from config.yaml morning.per_campaign
 echo "=== $(date '+%F %T') daily done ==="

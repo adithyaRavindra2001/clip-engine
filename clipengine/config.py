@@ -22,8 +22,9 @@ DEFAULTS: dict[str, Any] = {
     "youtube": {"api_key": ""},
     "transcription": {"model": "mlx-community/whisper-large-v3-turbo", "language": "en"},
     "brand": {"accent": "#FFD400", "hook_animation": True, "progress_bar": True, "music": True, "music_db": -22,
-              "music_dir": "./music"},
-    "clips": {"per_video": 8, "min_seconds": 15, "max_seconds": 55, "max_height": 1080},
+              "music_dir": "./music", "sfx": True, "sfx_db": -9, "sfx_dir": "./sfx"},
+    "clips": {"per_video": 8, "min_seconds": 15, "max_seconds": 55, "max_height": 2160},
+    "morning": {"per_campaign": 5, "min_qa": 60, "stock_factor": 2},
     "discovery": {
         "twitch_language": "en",
         "twitch_top_streams": 100,
@@ -96,6 +97,15 @@ class Config:
     @property
     def music_dir(self) -> Path:
         return (self.root / self.raw["brand"]["music_dir"]).resolve()
+
+    @property
+    def sfx_dir(self) -> Path:
+        """Sound-effects folder; synthesised royalty-free defaults are written here on first use."""
+        from . import sfx
+        d = (self.root / self.raw["brand"].get("sfx_dir", "./sfx")).resolve()
+        if self.raw["brand"].get("sfx", True):
+            sfx.ensure(d)
+        return d
 
     @property
     def style_guide_path(self) -> Path:
