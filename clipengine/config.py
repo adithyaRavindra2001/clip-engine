@@ -66,6 +66,8 @@ class Creator:
     # "streamer" = IRL/gaming/reaction content: Claude may put meme sounds (vine boom, fahh, bruh) on the beats.
     # "podcast" (default) = interviews, panels, informative: punch-in zoom only, never a sound.
     edit_style: str = "podcast"
+    # Campaign-mandated overlay (PNG with alpha, 1080x1920 or smaller), path relative to the project root.
+    watermark: str = ""
     # Short lowercase label used for pack folder names (todays-yt/<date>/<slug>-01/). Default: the name, lowercased.
     slug: str = ""
 

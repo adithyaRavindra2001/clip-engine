@@ -85,7 +85,9 @@ def process(cfg: Config, db, source: str, creator_name: str,
                                     beats=[b - m.start for b in m.beats],
                                     sounds=m.sounds if creator.edit_style == "streamer" else [],  # podcasts: zoom only
                                     sfx_dir=cfg.sfx_dir,
-                                    mood=m.mood, seed=video_id * 100 + n, **creator.source_options(source))
+                                    mood=m.mood, seed=video_id * 100 + n,
+                                    watermark=(cfg.root / creator.watermark) if creator.watermark else None,
+                                    **creator.source_options(source))
             except Exception as e:
                 print(f"    [warn] clip {n} failed: {e}")
                 shutil.rmtree(clip_dir, ignore_errors=True)
@@ -141,6 +143,7 @@ def rerender(cfg: Config, db, clip_id: int, hook: str, trim_start: float = 0.0, 
                          if creator and creator.music else None),
                   beats=[b - start for b in beats], sounds=sounds, sfx_dir=cfg.sfx_dir, mood=row["mood"] or "neutral",
                   seed=row["video_id"] * 100 + n,
+                  watermark=(cfg.root / creator.watermark) if creator and creator.watermark else None,
                   **(creator.source_options(row["url"]) if creator else {}))
     db.execute("UPDATE clips SET hook = ?, start = ?, end = ? WHERE id = ?", (hook, start, end, clip_id))
     db.commit()

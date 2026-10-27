@@ -331,7 +331,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
            brand: dict | None = None, music: Path | None = None,
            crop_top: float = 0.0, crop_bottom: float = 0.0, crop_left: float = 0.0, crop_right: float = 0.0,
            beats: list[float] | None = None, sfx_dir: Path | None = None, mood: str = "neutral",
-           seed: int = 0, sounds: list[str] | None = None) -> Path:
+           seed: int = 0, sounds: list[str] | None = None, watermark: Path | None = None) -> Path:
     """`beats` are seconds into the clip where the payoff lands (punchline, reveal); they get an impact."""
     b = {**DEFAULT_BRAND, **(brand or {})}
     L = choose_layout(src, layout, facecam)
@@ -357,9 +357,14 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     inputs = ["-i", src.name]
     amap = ["-map", "0:a?"]
     has_audio = _has_audio(src)
+    wm_index = None
+    if watermark and Path(watermark).exists():
+        wm_index = 1
+        inputs += ["-i", str(Path(watermark).resolve())]
+        graph = graph.replace("[v]", "[v0]") + f";[v0][{wm_index}:v]overlay=0:0:format=auto[v]"
     # Speech is normalised to -14 LUFS (YouTube/Instagram target) so quiet stage mics don't sink the clip.
     LOUD = "loudnorm=I=-14:TP=-1.5:LRA=11"
-    n_in = 1
+    n_in = 2 if wm_index else 1
     stems: list[str] = []   # audio labels to sum with the speech
     if has_audio:
         if music and b["music"]:
