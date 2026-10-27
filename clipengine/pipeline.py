@@ -81,7 +81,7 @@ def process(cfg: Config, db, source: str, creator_name: str,
                 words = transcribe.words_between(segments, m.start, m.end)
                 out = render.render(src, clip_dir / "clip.mp4", words, m.start, m.hook,
                                     creator.layout, creator.facecam, brand=cfg["brand"],
-                                    music=render.choose_music(cfg.music_dir, m.mood, video_id * 100 + n),
+                                    music=render.choose_music(cfg.music_dir, m.mood, video_id * 100 + n) if creator.music else None,
                                     beats=[b - m.start for b in m.beats], sfx_dir=cfg.sfx_dir, mood=m.mood,
                                     seed=video_id * 100 + n, **creator.source_options(source))
             except Exception as e:
@@ -132,7 +132,8 @@ def rerender(cfg: Config, db, clip_id: int, hook: str, trim_start: float = 0.0, 
     render.render(src, clip_dir / "clip.mp4", transcribe.words_between(segments, start, end), start, hook,
                   creator.layout if creator else "auto", creator.facecam if creator else None,
                   brand=cfg["brand"],
-                  music=render.choose_music(cfg.music_dir, row["mood"] or "neutral", row["video_id"] * 100 + n),
+                  music=(render.choose_music(cfg.music_dir, row["mood"] or "neutral", row["video_id"] * 100 + n)
+                         if creator and creator.music else None),
                   beats=[b - start for b in beats], sfx_dir=cfg.sfx_dir, mood=row["mood"] or "neutral",
                   seed=row["video_id"] * 100 + n,
                   **(creator.source_options(row["url"]) if creator else {}))

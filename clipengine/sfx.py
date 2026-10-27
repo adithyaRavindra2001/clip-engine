@@ -6,8 +6,8 @@ sfx/<name>/ to override any of them; the synthesised versions are only written w
 
     sfx/whoosh/   hook entrance (t = 0)                 short airy sweep
     sfx/impact/   each `beat` Claude marks               low thump + click
-    sfx/riser/    the 1.2 s before the FIRST beat        tension sweep (only when the beat is 4 s+ in)
-    sfx/ding/     a clean reveal / number said out loud  bell (used when the moment's mood is 'funny' or 'neutral')
+Real royalty-free samples (Mixkit Sound Effects Free License) live in sfx/whoosh and sfx/impact; the
+synthesised fallbacks below are only generated when a folder is empty.
 """
 from __future__ import annotations
 
@@ -30,15 +30,6 @@ SYNTH = {
         "lowpass=f=240,"
         "aecho=0.8:0.6:40:0.3,"
         "volume=2.2,alimiter=limit=0.95", 0.6),
-    "riser": (
-        # rising chirp 200 Hz -> ~2.4 kHz over 1.2 s, swelling in: a short tension sweep
-        "aevalsrc=exprs='0.5*sin(2*PI*(200*t+900*t*t))|0.5*sin(2*PI*(200*t+900*t*t))':s=48000:d=1.2,"
-        "volume='pow(t/1.2,1.5)':eval=frame,"
-        "highpass=f=150", 1.2),
-    "ding": (
-        "sine=f=1320:d=0.9,"
-        "volume='max(0,1-t*1.2)':eval=frame,"
-        "aecho=0.6:0.4:60:0.25,volume=0.7", 0.9),
 }
 
 
@@ -76,12 +67,17 @@ def plan(beats: list[float], duration: float, mood: str, hook: bool) -> list[tup
     ev: list[tuple[str, float]] = []
     if hook:
         ev.append(("whoosh", 0.0))
+    # Impacts land exactly on the punch-in zoom (render.punch_in_filter uses the same beat times), so the
+    # sound always has a visible cause. Risers and bells were tried and dropped: with no visual cue they
+    # felt random to the viewer.
     kept = sorted(b for b in beats if 0.8 < b < duration - 0.4)[:2]
-    for i, b in enumerate(kept):
-        if i == 0 and b >= 4.0:
-            ev.append(("riser", b - 1.2))
-        ev.append(("ding" if mood in ("funny", "neutral") and i == 1 else "impact", b - 0.05))
+    for b in kept:
+        ev.append(("impact", b))
     return ev
+
+
+# Per-sound trim relative to `sfx_db`: the whoosh is texture under the hook, the impact must be felt.
+GAIN = {"whoosh": -5.0, "impact": 0.0, "pop": -3.0}
 
 
 def filter_graph(sfx_dir: Path, events: list[tuple[str, float]], seed: int, level_db: float,
@@ -101,7 +97,7 @@ def filter_graph(sfx_dir: Path, events: list[tuple[str, float]], seed: int, leve
         inputs += ["-i", str(f)]
         ms = max(0, int(round(t * 1000)))
         parts.append(f"[{idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-                     f"volume={level_db:.1f}dB,adelay={ms}|{ms}[fx{idx}]")
+                     f"volume={level_db + GAIN.get(name, 0.0):.1f}dB,adelay={ms}|{ms}[fx{idx}]")
         labels.append(f"[fx{idx}]")
         idx += 1
     if not labels:

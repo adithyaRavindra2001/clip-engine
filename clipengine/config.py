@@ -62,6 +62,7 @@ class Creator:
     # Default trims for every video of this creator, as fractions of the frame: {top, bottom, left, right}.
     # Use it to cut stream overlays (chat column, viewer badge, tickers). Per-source entries override it.
     crop: dict = field(default_factory=dict)
+    music: bool = True        # set false when the campaign brief forbids music (e.g. FOMO: "no music")
     # Short lowercase label used for pack folder names (todays-yt/<date>/<slug>-01/). Default: the name, lowercased.
     slug: str = ""
 

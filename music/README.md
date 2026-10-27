@@ -16,3 +16,9 @@ Do NOT use trending TikTok/Reels sounds or any commercial song here: Content ID 
 and clipping campaigns reject claimed clips.
 
 MP3, M4A, WAV, AAC, OGG and FLAC all work. 5-10 tracks per folder is plenty.
+
+## Staged tracks (2026-10-27)
+Mixkit Stock Music Free License (free commercial use, no attribution, no standalone redistribution):
+energetic/ Need for speed (369), Hip Hop 02 (738) · tense/ Vastness (184) · funny/ Gimme that Groove! (872) · neutral/ Hip Hop 02.
+brand.music is OFF in config.yaml until the music variant of the experiment is approved. FOMO has `music: false` in
+creators.yaml because the brief says "no music", so it never gets a bed even when music is on.

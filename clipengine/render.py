@@ -182,6 +182,34 @@ def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0,
     )
 
 
+def _face_x_frac(L: dict, crop_left: float = 0.0, crop_right: float = 0.0) -> float:
+    """Where the speaker's face sits across the OUTPUT frame (0..1) for a crop layout; 0.5 for split."""
+    if L["kind"] != "crop":
+        return 0.5
+    W, H = L["W"], L["H"]
+    ch = H  # the horizontal maths does not depend on top/bottom trims
+    x_lo, x_hi = _even(W * crop_left), _even(W * (1 - crop_right))
+    cw = min(_even(ch * OUT_W / OUT_H), _even(x_hi - x_lo))
+    x = _even(min(max(L["cx"] - cw / 2, x_lo), x_hi - cw))
+    return min(0.8, max(0.2, (L["cx"] - x) / cw))
+
+
+def punch_in_filter(beats: list[float], amount: float = 0.12, attack: float = 0.10, hold: float = 0.55,
+                    release: float = 0.30, focus_x: float = 0.5, focus_y: float = 0.42) -> str:
+    """A 'punch-in': the frame snaps to (1+amount)x over `attack` s on each beat, holds, then eases back.
+    This is the visual cue an impact sound is tied to, so the sound never feels random. Zoom is centred a
+    little above the middle of the frame, where the speaker's face sits in a 9:16 crop. Rewrites [base]."""
+    pulses = []
+    for t0 in beats:
+        t1, t2, t3 = t0 + attack, t0 + attack + hold, t0 + attack + hold + release
+        pulses.append(f"if(between(t,{t0:.3f},{t1:.3f}),(t-{t0:.3f})/{attack:.3f},"
+                      f"if(between(t,{t1:.3f},{t2:.3f}),1,"
+                      f"if(between(t,{t2:.3f},{t3:.3f}),1-(t-{t2:.3f})/{release:.3f},0)))")
+    z = f"(1+{amount:.3f}*min(1,{'+'.join(pulses)}))"
+    return (f"[base]scale=w='trunc(iw*{z}/2)*2':h='trunc(ih*{z}/2)*2':eval=frame:{SCALE},"
+            f"crop={OUT_W}:{OUT_H}:'(iw-{OUT_W})*{focus_x:.2f}':'(ih-{OUT_H})*{focus_y:.2f}'[base]")
+
+
 # ---------- captions ----------
 
 ASS_HEADER = f"""[Script Info]
@@ -205,6 +233,8 @@ DEFAULT_BRAND = {
     "progress_bar": True,    # thin bar along the bottom edge that fills over the clip
     "music": True,           # mix a quiet bed from music/<mood>/ under the speech (skipped if no files)
     "music_db": -22,         # music level relative to full scale; speech ducks it further
+    "punch_in": False,       # quick zoom-in (punch) on each beat Claude marks; the impact sound sits on the same frame
+    "punch_in_zoom": 0.12,   # how far the punch zooms (0.12 = 12%)
     "sfx": False,            # whoosh on the hook, impact on the beats Claude marks (sfx/ folder, synthesised if empty)
     "sfx_db": -9,            # effects level (sounds are peak-normalised to -1 dBFS)
 }
@@ -312,7 +342,12 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
                              accent=b["accent"], hook_animation=b["hook_animation"]))
 
-    graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src) + f";[base]subtitles={ass.name}[s]"
+    graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src)
+    punches = sorted(t for t in (beats or []) if 0.8 < t < duration - 0.4)[:2] if b.get("punch_in") else []
+    if punches:
+        graph += ";" + punch_in_filter(punches, float(b.get("punch_in_zoom", 0.12)),
+                                       focus_x=_face_x_frac(L, crop_left, crop_right))
+    graph += f";[base]subtitles={ass.name}[s]"
     if b["progress_bar"]:
         graph += (f";[s]drawbox=x=0:y=ih-14:w='iw*min(t/{duration:.3f},1)':h=14:"
                   f"color={_ff_colour(b['accent'])}@0.9:t=fill[v]")
