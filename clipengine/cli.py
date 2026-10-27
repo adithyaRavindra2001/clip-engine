@@ -6,6 +6,8 @@
   clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN.mp4 + .jpg, one UPLOAD.txt
   clip upload                    publish today's pack: YouTube Studio upload + Content Rewards submission
   clip login                     open the automation Chrome profile to sign in once
+  clip tally                     everything published so far (tally/uploads.csv)
+  clip posted NAME URL           log a clip you uploaded by hand
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
   clip stats                     quick performance summary
@@ -97,6 +99,24 @@ def cmd_login(cfg, db, args):
     uploader.login(cfg)
 
 
+def cmd_tally(cfg, db, args):
+    rows = uploader.tally_rows(cfg)
+    if not rows:
+        print("Nothing published yet (tally/uploads.csv is empty).")
+        return
+    per = {}
+    for r in rows:
+        per[r["campaign"]] = per.get(r["campaign"], 0) + 1
+    print(f"{'date':<11}{'name':<16}{'how':<7}{'url':<40} title")
+    for r in rows:
+        print(f"{r['date']:<11}{r['name']:<16}{r['how']:<7}{r['youtube_url']:<40} {r['title'][:50]}")
+    print("\n" + ", ".join(f"{k}: {v}" for k, v in sorted(per.items())) + f"  — {len(rows)} total")
+
+
+def cmd_posted(cfg, db, args):
+    uploader.record_manual(cfg, db, args.name, args.url, args.date)
+
+
 def cmd_review(cfg, db, args):
     review.serve(cfg, args.port)
 
@@ -152,6 +172,12 @@ def main(argv: list[str] | None = None) -> None:
     u.set_defaults(fn=cmd_upload)
 
     sub.add_parser("login", help="open the automation Chrome profile to sign in to YouTube + Content Rewards").set_defaults(fn=cmd_login)
+
+    sub.add_parser("tally", help="list everything published (tally/uploads.csv)").set_defaults(fn=cmd_tally)
+
+    po = sub.add_parser("posted", help="log a clip you uploaded by hand: clip posted fomo-01 https://youtube.com/shorts/...")
+    po.add_argument("name"); po.add_argument("url"); po.add_argument("--date", default=None)
+    po.set_defaults(fn=cmd_posted)
 
     v = sub.add_parser("review", help="open the review page")
     v.add_argument("--port", type=int, default=8765)

@@ -239,6 +239,55 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
         raise RuntimeError("submission form reported an error")
 
 
+# ---------- tally ----------
+
+TALLY = "tally/uploads.csv"
+TALLY_HEADER = "date,name,campaign,title,youtube_url,posted_at,submitted_at,how\n"
+
+
+def tally_add(cfg: Config, day: str, name: str, campaign: str, title: str, url: str,
+              posted_at: str, submitted_at: str, how: str) -> None:
+    """One line per published clip in tally/uploads.csv (human-readable, git-tracked)."""
+    import csv
+    f = cfg.root / TALLY
+    f.parent.mkdir(exist_ok=True)
+    new = not f.exists()
+    with f.open("a", newline="") as fh:
+        w = csv.writer(fh)
+        if new:
+            w.writerow(TALLY_HEADER.strip().split(","))
+        w.writerow([day, name, campaign, title, url, posted_at, submitted_at, how])
+
+
+def tally_rows(cfg: Config) -> list[dict]:
+    import csv
+    f = cfg.root / TALLY
+    if not f.exists():
+        return []
+    with f.open() as fh:
+        return list(csv.DictReader(fh))
+
+
+def record_manual(cfg: Config, db, name: str, url: str, day: str | None = None) -> None:
+    """Log a clip you uploaded and submitted by hand: marks UPLOAD.txt, the DB and the tally."""
+    day = day or latest_pack(cfg) or date.today().isoformat()
+    root = cfg.root / "todays-yt" / day
+    upload_txt = root / "UPLOAD.txt"
+    e = next((e for e in parse_pack(upload_txt) if e["name"] == name), None)
+    if not e:
+        raise SystemExit(f"{name} not in {upload_txt}")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if not e["posted"]:
+        _note(upload_txt, name, f"POSTED: {url}")
+    if not e["submitted"]:
+        _note(upload_txt, name, f"SUBMITTED: {now} (manual)")
+    if e["id"]:
+        db.execute("UPDATE clips SET status='posted', posted_url=?, decided_at=CURRENT_TIMESTAMP WHERE id=?", (url, e["id"]))
+        db.commit()
+    tally_add(cfg, day, name, name.rsplit("-", 1)[0], e["title"], url, now, now, "manual")
+    print(f"logged {name} -> {url}")
+
+
 # ---------- orchestration ----------
 
 def latest_pack(cfg: Config) -> str | None:
@@ -296,6 +345,8 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
                     print("    submitted")
                 else:
                     _note(upload_txt, name, "SUBMITTED: no-campaign-url")
+                tally_add(cfg, day, name, name.rsplit("-", 1)[0], e["title"], url,
+                          datetime.now().strftime("%Y-%m-%d %H:%M"), datetime.now().strftime("%Y-%m-%d %H:%M"), "auto")
                 with (cfg.data_dir / "uploads.log").open("a") as log:
                     log.write(json.dumps({"date": day, "name": name, "url": url, "campaign": e["campaign_url"],
                                           "at": datetime.now().isoformat(timespec="seconds")}) + "\n")
