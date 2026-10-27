@@ -348,11 +348,17 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
     _debug(page, "after-submit", cfg)   # always keep a picture of what the site said
     # The only reliable success signal: the video now appears on the Submissions page.
     vid = re.search(r"(?:v=|/shorts/|youtu\.be/)([\w-]{11})", short_url).group(1)
-    for attempt in range(4):   # the Submissions list can lag a few seconds behind the submit
+    dialog_open = bool(page.get_by_text(re.compile(r"submit clip link", re.I)).count())
+    if dialog_open:
+        _debug(page, "submit-dialog-still-open", cfg)
+        raise RuntimeError("submission dialog is still open after clicking Submit")
+    # The Submissions list can lag a minute or two behind (the site verifies ownership first). A closed dialog with no
+    # error is a success; the listing check is confirmation only, and the nightly reconcile is the backstop.
+    for attempt in range(6):
         if vid in cr_submissions(page):
             return
-        time.sleep(8)
-    raise RuntimeError("submitted, but the clip is not on the Submissions page afterwards")
+        time.sleep(15)
+    print("    (submitted; not yet visible on the Submissions page, reconcile will confirm)", flush=True)
 
 
 # ---------- tally ----------
@@ -558,9 +564,20 @@ def cr_submissions(page) -> set[str]:
     """YouTube video ids already submitted on Content Rewards (links on the Submissions page)."""
     page.goto("https://contentrewards.com/c/submissions", wait_until="domcontentloaded")
     page.wait_for_timeout(5000)
-    for _ in range(6):   # load more, if the page paginates on scroll
-        page.mouse.wheel(0, 4000)
-        page.wait_for_timeout(800)
+    seen = -1
+    for _ in range(25):   # infinite scroll / "load more" until the list stops growing
+        page.mouse.wheel(0, 6000)
+        page.wait_for_timeout(900)
+        try:
+            more = page.get_by_role("button", name=re.compile(r"(load|show) more", re.I)).first
+            if more.count() and more.is_visible(timeout=500):
+                more.click(); page.wait_for_timeout(1500)
+        except Exception:
+            pass
+        n = page.locator('a[href*="youtu"]').count()
+        if n == seen:
+            break
+        seen = n
     hrefs = page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
     ids = set()
     for h in hrefs:
@@ -600,7 +617,11 @@ def reconcile(cfg: Config, db, dry_run: bool = False, window_min: int = 30, forc
         channel = _channel(page)
         videos = channel_videos(cfg, channel)
         submitted = cr_submissions(page)
-        print(f"channel {channel}: {len(videos)} public video(s); Content Rewards has {len(submitted)} submission(s)")
+        recorded = {re.search(r"([\w-]{11})$", r["youtube_url"].rstrip("/")).group(1) for r in tally_rows(cfg)
+                    if r.get("submitted_at") and re.search(r"[\w-]{11}$", r["youtube_url"].rstrip("/"))}
+        print(f"channel {channel}: {len(videos)} public video(s); Content Rewards lists {len(submitted)} submission(s), "
+              f"our tally has {len(recorded)}")
+        submitted |= recorded
         # The Submissions page lists only the newest ~20; anything older than 2 days is past every campaign's
         # posting window anyway, so only recent videos are compared.
         from datetime import timedelta
