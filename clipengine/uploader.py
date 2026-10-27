@@ -241,9 +241,22 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
 
 # ---------- orchestration ----------
 
+def latest_pack(cfg: Config) -> str | None:
+    """Newest todays-yt/<date> whose UPLOAD.txt still has clips without a SUBMITTED line. The upload job
+    runs at 03:30, after midnight, so 'today' is usually the pack cut the evening before."""
+    packs = sorted((p for p in (cfg.root / "todays-yt").glob("????-??-??") if (p / "UPLOAD.txt").exists()), reverse=True)
+    for p in packs[:7]:
+        if any(not e["submitted"] and (p / f"{e['name']}.mp4").exists() for e in parse_pack(p / "UPLOAD.txt")):
+            return p.name
+    return None
+
+
 def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int = 240,
         dry_run: bool = False, only: str | None = None) -> int:
-    day = day or date.today().isoformat()
+    day = day or latest_pack(cfg)
+    if not day:
+        print("No pack with unpublished clips in todays-yt/")
+        return 0
     root = cfg.root / "todays-yt" / day
     upload_txt = root / "UPLOAD.txt"
     if not upload_txt.exists():

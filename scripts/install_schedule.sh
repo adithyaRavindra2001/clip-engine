@@ -1,5 +1,6 @@
 #!/bin/zsh
-# Schedules `clip daily` at 03:30 every night via launchd. Your Mac must be awake (or set to wake) then.
+# Schedules the nightly cut (21:30 IST) and the upload run (03:30 IST, US prime time) via launchd.
+# The Mac must stay awake: sudo pmset -c sleep 0 (plugged in).
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$ROOT/data" ~/Library/LaunchAgents ~/Library/Logs/clipengine
@@ -9,4 +10,4 @@ for job in daily review; do
   launchctl load ~/Library/LaunchAgents/com.clipengine.$job.plist
 done
 echo "Scheduled: daily_claude.sh at 17:30 (log: ~/Library/Logs/clipengine/daily.log); review page kept alive at http://localhost:8765"
-echo "Tip: System Settings > Battery > Options > prevent sleep when plugged in, or: sudo pmset repeat wake MTWRFSU 03:25:00"
+echo "Tip: keep the Mac awake on the charger: sudo pmset -c sleep 0"
