@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Publishes the latest pack at 03:30 IST = 6 PM US East / 3 PM US West (5 PM / 2 PM once US clocks fall back on
-  1 Nov 2026): YouTube Studio upload, then Content Rewards submission, ~4 min apart.
+  Publishes the latest pack from 21:30 IST = 12:00 US East (11:00 after 1 Nov): up to 10 clips, 45-90 min apart,
+  so the channel posts through the whole US afternoon and evening instead of one burst.
   Needs the Mac awake (sudo pmset -c sleep 0) and a signed-in automation profile (clip login).
   Install:  ./scripts/install_schedule.sh
   Remove:   launchctl unload ~/Library/LaunchAgents/com.clipengine.upload.plist
@@ -13,10 +13,10 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string><string>-lc</string>
-    <string>cd "/Users/adithya/Desktop/projects/clip-engine" &amp;&amp; source .venv/bin/activate &amp;&amp; clip upload --limit 20 --spacing 240; clip reconcile</string>
+    <string>cd "/Users/adithya/Desktop/projects/clip-engine" &amp;&amp; source .venv/bin/activate &amp;&amp; clip upload --limit 10 --spacing 3600; clip reconcile</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+  <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
   <key>StandardOutPath</key><string>/Users/adithya/Library/Logs/clipengine/upload.log</string>
   <key>StandardErrorPath</key><string>/Users/adithya/Library/Logs/clipengine/upload.log</string>
 </dict>

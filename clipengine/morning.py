@@ -18,7 +18,7 @@ from pathlib import Path
 from . import qa
 from .config import Config, Creator
 
-GENERIC_TAGS = ["#shorts"]
+GENERIC_TAGS: list[str] = []   # YouTube: #shorts/#fyp/#viral add nothing; 3-5 topical tags + campaign tags only
 
 
 def hashtags(caption: str, creator) -> list[str]:
@@ -31,9 +31,11 @@ def hashtags(caption: str, creator) -> list[str]:
             tags.append(t)
     seen, out = set(), []
     for t in tags:
+        if t.lower() in ("#shorts", "#fyp", "#viral", "#foryou", "#trending"):
+            continue
         if t.lower() not in seen:
             seen.add(t.lower()); out.append(t)
-    return out[:12]
+    return out[:5]
 
 
 def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int = 60,

@@ -481,7 +481,7 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
                 _notify("clip upload stopped", f"{name}: {str(ex)[:80]}")
                 break
             if done < min(limit, len(todo)):
-                pause = spacing * random.uniform(0.7, 1.4)
+                pause = spacing * random.uniform(0.75, 1.5)
                 print(f"    next in {pause/60:.1f} min")
                 time.sleep(pause)
     finally:

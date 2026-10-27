@@ -23,8 +23,9 @@ reaction, a bold claim, or an unresolved question.
 info, or would embarrass the creator (they're paying for this).
 
 Hard rules:
-- Clip length between {min_s} and {max_s} seconds. Start on the hook, not on preamble. End right \
-after the payoff.
+- Clip length between {min_s} and {max_s} seconds; 15-35 s is the sweet spot (every start and replay counts \
+as a view, short loops get replayed). Start on the hook, not on preamble. End right after the payoff, \
+ideally on a line that makes the first second make sense again, so the clip loops.
 - Timestamps must come from the transcript. Do not invent dialogue.
 - Moments must not overlap.
 - Follow the campaign rules exactly; drop any moment that breaks them. If the rules require a specific \

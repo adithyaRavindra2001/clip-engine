@@ -9,5 +9,5 @@ for job in daily review upload; do
   launchctl unload ~/Library/LaunchAgents/com.clipengine.$job.plist 2>/dev/null || true
   launchctl load ~/Library/LaunchAgents/com.clipengine.$job.plist
 done
-echo "Scheduled: cut at 21:30, upload + reconcile at 03:30 (logs: ~/Library/Logs/clipengine/{daily,upload}.log); review page at http://localhost:8765"
+echo "Scheduled: campaign check + cut at 19:00, upload (10/day, hourly) from 21:30 + reconcile (logs: ~/Library/Logs/clipengine/{daily,upload}.log); review page at http://localhost:8765"
 echo "Tip: keep the Mac awake on the charger: sudo pmset -c sleep 0"
