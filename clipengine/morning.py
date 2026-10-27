@@ -84,7 +84,8 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
 
     root.mkdir(parents=True, exist_ok=True)
     # Files are <campaign slug>-NN.mp4; numbering continues per campaign when appending to today's pack.
-    existing = [p for p in root.glob("*.mp4") if re.fullmatch(r"[a-z0-9]+-\d+", p.stem)]
+    existing = [p for sub in (root, root / "done", root / "held") for p in sub.glob("*.mp4")
+                if re.fullmatch(r"[a-z0-9]+-\d+", p.stem)]
     counter = {}
     for p in existing:
         slug_, n = p.stem.rsplit("-", 1)
