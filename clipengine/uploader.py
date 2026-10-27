@@ -318,7 +318,20 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
         dlg = page.locator("[role=dialog]").first.inner_text() if page.locator("[role=dialog]").count() else page.inner_text("body")
         raise RuntimeError("Submit button stayed disabled; dialog says: " + " | ".join(l.strip() for l in dlg.splitlines() if l.strip())[:300])
     confirm.click()
-    _sleep(2.5, 4.0)
+    # Wait for the request to finish: the site verifies ownership and posting time with YouTube, which can
+    # take a while right after publishing. Never navigate away while the page still says "Submitting".
+    t0 = time.time()
+    while time.time() - t0 < 180:
+        try:
+            if not re.search(r"submitting", page.inner_text("body"), re.I):
+                break
+        except Exception:
+            break
+        time.sleep(2)
+    else:
+        _debug(page, "submit-hung", cfg)
+        raise RuntimeError("Content Rewards stayed on 'Submitting…' for 3 minutes; will retry on the next run")
+    _sleep(1.5, 2.5)
     _debug(page, "after-submit", cfg)   # always keep a picture of what the site said
     # The only reliable success signal: the video now appears on the Submissions page.
     vid = re.search(r"(?:v=|/shorts/|youtu\.be/)([\w-]{11})", short_url).group(1)
