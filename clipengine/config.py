@@ -1,6 +1,8 @@
 """Loads config.yaml and creators.yaml, with environment-variable fallbacks for secrets."""
 from __future__ import annotations
 
+import re
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +62,11 @@ class Creator:
     # Default trims for every video of this creator, as fractions of the frame: {top, bottom, left, right}.
     # Use it to cut stream overlays (chat column, viewer badge, tickers). Per-source entries override it.
     crop: dict = field(default_factory=dict)
+    # Short lowercase label used for pack folder names (todays-yt/<date>/<slug>-01/). Default: the name, lowercased.
+    slug: str = ""
+
+    def __post_init__(self):
+        self.slug = re.sub(r"[^a-z0-9]+", "", (self.slug or self.name).lower()) or "clip"
 
     @property
     def source_urls(self) -> list[str]:

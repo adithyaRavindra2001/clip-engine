@@ -3,7 +3,7 @@
   clip daily                     discover fresh VODs from allowed creators, clip them, write prospects report
   clip run URL --creator NAME    clip one VOD / podcast (URL or local file)
   clip discover                  prospects report only
-  clip morning                   auto-pick today's uploads -> todays-yt/<date>/vidN/ (vid.mp4, info.txt, thumbnail.jpg)
+  clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN/ (vid.mp4, info.txt, thumbnail.jpg)
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
   clip stats                     quick performance summary
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("discover", help="prospects report").set_defaults(fn=cmd_discover)
 
-    m = sub.add_parser("morning", help="auto-select today's best clips into todays-yt/<date>/vidN/ with info.txt + thumbnail")
+    m = sub.add_parser("morning", help="auto-select today's best clips into todays-yt/<date>/<campaign>-NN/ with info.txt + thumbnail")
     m.add_argument("--date", default=None)
     m.add_argument("--limit", type=int, default=None, help="clips PER CAMPAIGN (default: morning.per_campaign)")
     m.add_argument("--min-qa", type=int, default=None)

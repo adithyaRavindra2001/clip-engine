@@ -1,9 +1,9 @@
 """The morning pack: pick today's best clips automatically and lay them out for one-click uploading.
 
-    todays-yt/<date>/vid1/vid.mp4        the clip
-                          thumbnail.jpg  sharpest face frame + hook text
-                          info.txt       TITLE / DESCRIPTION / HASHTAGS / where to submit / checklist
-                     SUMMARY.txt         the day's list, in upload order, with why each was chosen
+    todays-yt/<date>/fomo-01/vid.mp4        the clip   (folder = campaign slug + number within that campaign)
+                             thumbnail.jpg  sharpest face frame + hook text
+                             info.txt       TITLE / DESCRIPTION / HASHTAGS / where to submit / checklist
+                     SUMMARY.txt            the day's list, in upload order, with why each was chosen
 
 Selection = Claude's performance score blended with the frame-level QA score; clips that fail QA are
 rejected with the reason recorded, so the learning loop still sees every decision.
@@ -39,7 +39,7 @@ def hashtags(caption: str, creator) -> list[str]:
 def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int = 60,
           per_video: int | None = None, only: str | None = None) -> Path:
     """`limit` is PER CAMPAIGN: every allowed campaign with pending clips gets up to `limit` of its best.
-    Running twice on the same day APPENDS (vid numbering continues), so campaigns can be packed in stages."""
+    Running twice on the same day APPENDS (numbering continues per campaign), so campaigns can be packed in stages."""
     day = day or date.today().isoformat()
     root = cfg.root / "todays-yt" / day
     per_video = per_video or limit
@@ -81,8 +81,12 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
                                t[0]["creator"], -(0.6 * t[0]["score"] + 0.4 * t[1]["qa"])))
 
     root.mkdir(parents=True, exist_ok=True)
-    existing = sorted(int(p.name[3:]) for p in root.glob("vid*") if p.is_dir() and p.name[3:].isdigit())
-    start_n = (existing[-1] if existing else 0) + 1
+    # Folders are <campaign slug>-NN; numbering continues per campaign when appending to today's pack.
+    existing = [p for p in root.iterdir() if p.is_dir() and re.fullmatch(r"[a-z0-9]+-\d+", p.name)]
+    counter = {}
+    for p in existing:
+        slug_, n = p.name.rsplit("-", 1)
+        counter[slug_] = max(counter.get(slug_, 0), int(n))
     summary = [f"TODAY'S UPLOADS — {day}", "",
                "Upload in this order, spaced through the evening. Copy TITLE and DESCRIPTION from each info.txt.",
                "Submit every URL on its campaign page right after posting (Reach campaigns: within 30 minutes).", ""]
@@ -95,12 +99,14 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
                     + ". Open each campaign's reference files on Content Rewards and check the caption rules "
                       "(required mentions/hashtags) before posting these.", ""]
     last_campaign = None
-    for n, (r, res) in enumerate(chosen, start_n):
+    for r, res in chosen:
         creator = cfg.creator(r["creator"])
         if r["creator"] != last_campaign:
             summary.append(f"--- {r['creator']} (${creator.cpm:.2f} per 1K views) ---")
             last_campaign = r["creator"]
-        folder = root / f"vid{n}"
+        counter[creator.slug] = counter.get(creator.slug, 0) + 1
+        name = f"{creator.slug}-{counter[creator.slug]:02d}"
+        folder = root / name
         folder.mkdir(exist_ok=True)
         shutil.copy2(r["path"], folder / "vid.mp4")
         src = Path(r["path"]).with_name("src.mp4")
@@ -134,7 +140,7 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
             "- Copy the Short's URL and submit it on the campaign page (link above) straight away.\n"
             "- Paste the URL into the review page's Approved tab so views get tracked.\n")
         db.execute("UPDATE clips SET status='approved', reason='auto-selected for morning pack', decided_at=CURRENT_TIMESTAMP WHERE id=?", (r["id"],))
-        summary.append(f"vid{n}: {r['title']}  [score {r['score']}, QA {res['qa']}, {res['duration']}s]  — {r['why']}")
+        summary.append(f"{name}: {r['title']}  [score {r['score']}, QA {res['qa']}, {res['duration']}s]  — {r['why']}")
     db.commit()
     left = [t for t in ranked if t[1]["qa"] >= min_qa and t[0]["id"] not in {c[0]["id"] for c in chosen}]
     summary += ["", f"{len(chosen)} selected, {len(left)} good clips held for tomorrow, "
