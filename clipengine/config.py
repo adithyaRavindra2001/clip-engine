@@ -57,17 +57,22 @@ class Creator:
     # each day, instead of discovering fresh uploads. Use for brand campaigns that ship a folder of videos.
     sources: list = field(default_factory=list)   # str, or {url, crop_bottom, crop_top} (fractions of frame height)
     cpm: float = 0.0          # $ per 1,000 views the campaign pays; daily works highest-paying creators first
+    # Default trims for every video of this creator, as fractions of the frame: {top, bottom, left, right}.
+    # Use it to cut stream overlays (chat column, viewer badge, tickers). Per-source entries override it.
+    crop: dict = field(default_factory=dict)
 
     @property
     def source_urls(self) -> list[str]:
         return [x["url"] if isinstance(x, dict) else x for x in self.sources]
 
     def source_options(self, url: str) -> dict:
-        """Per-source render tweaks, e.g. crop_bottom: 0.14 to cut burned-in subtitles off a file."""
+        """Per-source render tweaks, e.g. crop_bottom: 0.14 to cut burned-in subtitles off a file.
+        Starts from the creator-level `crop` defaults."""
+        opts = {f"crop_{k}": float(v) for k, v in (self.crop or {}).items() if k in ("top", "bottom", "left", "right")}
         for x in self.sources:
             if isinstance(x, dict) and x.get("url") == url:
-                return {k: v for k, v in x.items() if k != "url"}
-        return {}
+                opts.update({k: v for k, v in x.items() if k != "url"})
+        return opts
 
     @property
     def allowed(self) -> bool:

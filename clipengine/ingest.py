@@ -79,9 +79,27 @@ def download_section(source: str, start: float, end: float, out: Path, max_heigh
         "force_keyframes_at_cuts": True,
         "outtmpl": str(out.with_suffix("")) + ".%(ext)s",
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([source])
-    got = next(out.parent.glob(out.stem + ".*"))
-    if got != out:
-        got.rename(out)
-    return out
+    for attempt in (1, 2):
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([source])
+        got = next(out.parent.glob(out.stem + ".*"))
+        if got != out:
+            got.rename(out)
+        # A throttled/aborted range download can leave a file with full audio but only a few seconds of
+        # video. Never render that; retry once, then fail loudly.
+        have = _video_duration(out)
+        if have >= (end - start) - 1.5:
+            return out
+        print(f"    [warn] section video is {have:.1f}s of {end - start:.1f}s (truncated download), retry {attempt}")
+        out.unlink(missing_ok=True)
+    raise RuntimeError(f"truncated section download for {source} @ {start:.0f}-{end:.0f}s")
+
+
+def _video_duration(path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration",
+         "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+    try:
+        return float(out.stdout.strip().split("\n")[0])
+    except ValueError:
+        return 0.0

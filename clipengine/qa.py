@@ -110,7 +110,8 @@ def thumbnail(clip: Path, hook: str, out: Path, frame=None, accent: str = "#FFD4
         from . import render as _r
         try:
             frame = _r.frame_at(Path(clean["src"]), clean["t"], clean.get("layout", "auto"), clean.get("facecam"),
-                                clean.get("crop_top", 0.0), clean.get("crop_bottom", 0.0))
+                                clean.get("crop_top", 0.0), clean.get("crop_bottom", 0.0),
+                                clean.get("crop_left", 0.0), clean.get("crop_right", 0.0))
         except Exception as e:
             print(f"    [warn] clean thumbnail frame failed ({e}); falling back to the clip frame")
             frame = None

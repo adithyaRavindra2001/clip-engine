@@ -89,13 +89,18 @@ def pick_via_file(work: Path, system: str, user: str) -> Picks:
     pick_request.md, answer it as picks.json next to it, then run the same command again.
     """
     req, ans = work / "pick_request.md", work / "picks.json"
+    text = (f"# SYSTEM\n\n{system}\n\n# USER\n\n{user}\n\n"
+            "# ANSWER FORMAT\n\nWrite picks.json next to this file:\n" + Picks.model_json_schema().__repr__())
+    # Only rewrite the request when it actually changed, so a re-run (same video, same used ranges)
+    # keeps reusing the answer instead of marking it stale.
+    if not req.exists() or req.read_text() != text:
+        if ans.exists() and req.exists() and ans.stat().st_mtime < req.stat().st_mtime:
+            ans.rename(work / "picks.stale.json")  # answer predates the previous request: never reuse it
+        req.write_text(text)
     if ans.exists() and req.exists() and ans.stat().st_mtime < req.stat().st_mtime:
-        ans.rename(work / "picks.stale.json")  # answer predates this request: never reuse it
+        ans.rename(work / "picks.stale.json")  # answer predates this (new) request
     if ans.exists() and ans.stat().st_mtime < (work / "transcript.json").stat().st_mtime:
         ans.rename(work / "picks.stale.json")
-    req.write_text(f"# SYSTEM\n\n{system}\n\n# USER\n\n{user}\n\n"
-                   "# ANSWER FORMAT\n\nWrite picks.json next to this file:\n"
-                   + Picks.model_json_schema().__repr__())
     if not ans.exists():
         raise SystemExit(
             f"claude.mode is 'file' and no picks yet.\n  Prompt written to: {req}\n"

@@ -102,11 +102,11 @@ def _with_light(graph: str, path: Path) -> str:
 
 
 def frame_at(src: Path, t: float, layout: str = "auto", facecam: list[float] | None = None,
-             crop_top: float = 0.0, crop_bottom: float = 0.0):
+             crop_top: float = 0.0, crop_bottom: float = 0.0, crop_left: float = 0.0, crop_right: float = 0.0):
     """One 1080x1920 frame from the ORIGINAL source at time t, laid out exactly like the clip but
     without captions or hook, as a BGR array. Used for clean thumbnails."""
     L = choose_layout(src, layout, facecam)
-    graph = _with_light(video_filter(L, crop_top, crop_bottom), src) + ";[base]null[v]"
+    graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src) + ";[base]null[v]"
     out = subprocess.run(
         ["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(src), "-filter_complex", graph, "-map", "[v]",
          "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True, check=True).stdout
@@ -149,14 +149,16 @@ def choose_layout(path: Path, layout: str, facecam: list[float] | None) -> dict:
     return {"kind": "crop", "W": W, "H": H, "cx": W / 2}
 
 
-def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0) -> str:
+def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0,
+                 crop_left: float = 0.0, crop_right: float = 0.0) -> str:
     W, H = L["W"], L["H"]
     if L["kind"] == "crop":
-        # Optionally drop bands at the top/bottom of the source first (burned-in subtitles, tickers).
+        # Optionally drop bands at the edges of the source first (burned-in subtitles, tickers, chat columns).
         y0 = _even(H * crop_top)
         ch = _even(H * (1 - crop_top - crop_bottom))
-        cw = min(_even(ch * OUT_W / OUT_H), _even(W))
-        x = _even(min(max(L["cx"] - cw / 2, 0), W - cw))
+        x_lo, x_hi = _even(W * crop_left), _even(W * (1 - crop_right))
+        cw = min(_even(ch * OUT_W / OUT_H), _even(x_hi - x_lo))
+        x = _even(min(max(L["cx"] - cw / 2, x_lo), x_hi - cw))
         return f"[0:v]crop={cw}:{ch}:{x}:{y0},scale={OUT_W}:{OUT_H}:{SCALE},setsar=1[base]"
 
     # split: facecam on top, centre of gameplay below
@@ -297,7 +299,7 @@ def _has_audio(path: Path) -> bool:
 def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
            layout: str = "auto", facecam: list[float] | None = None,
            brand: dict | None = None, music: Path | None = None,
-           crop_top: float = 0.0, crop_bottom: float = 0.0,
+           crop_top: float = 0.0, crop_bottom: float = 0.0, crop_left: float = 0.0, crop_right: float = 0.0,
            beats: list[float] | None = None, sfx_dir: Path | None = None, mood: str = "neutral",
            seed: int = 0) -> Path:
     """`beats` are seconds into the clip where the payoff lands (punchline, reveal); they get an impact."""
@@ -310,7 +312,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
                              accent=b["accent"], hook_animation=b["hook_animation"]))
 
-    graph = _with_light(video_filter(L, crop_top, crop_bottom), src) + f";[base]subtitles={ass.name}[s]"
+    graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src) + f";[base]subtitles={ass.name}[s]"
     if b["progress_bar"]:
         graph += (f";[s]drawbox=x=0:y=ih-14:w='iw*min(t/{duration:.3f},1)':h=14:"
                   f"color={_ff_colour(b['accent'])}@0.9:t=fill[v]")
