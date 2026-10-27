@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import anthropic
@@ -42,6 +43,11 @@ podcasts, interviews and informative content use "none" for every beat. Options:
     "bruh"  — the "bruh" voice: a fail, a dumb take, an awkward silence
     "none"  — no sound, just the punch-in
   Use at most one "fahh" per clip. If unsure, "none" beats a wrong sound.
+- TITLE style: one punchy line a Gen Z viewer would tap, written like a friend texting, not a news \
+headline. No colons, no quotation marks, no "Name: quote" or "quote - Name" formats, no hashtags. \
+Lowercase is fine, slang is fine, a single emoji is fine. Under 70 characters. \
+Bad: Jorge Masvidal confirms his comeback: "blockbuster fight" next year \
+Good: masvidal just confirmed his comeback and it's a blockbuster
 - Every clip must be sharp and watchable at full screen: skip moments where the camera is far \
 from the speaker or the shot is a wide stage with no face if a tighter shot of the same point exists.
 """
@@ -54,7 +60,7 @@ class Moment(BaseModel):
     start: float = Field(description="Start time in seconds, from the transcript")
     end: float = Field(description="End time in seconds, from the transcript")
     score: int = Field(description="Predicted performance 1-100")
-    title: str = Field(description="Short title for YouTube Shorts, under 70 characters")
+    title: str = Field(description="One punchy Gen Z line, no colons or quotation marks, under 70 characters")
     hook: str = Field(description="On-screen hook text, max 8 words")
     caption: str = Field(description="Post description: one line + 3-5 relevant hashtags")
     why: str = Field(description="One sentence: why this will perform")
@@ -176,6 +182,14 @@ def pick_moments(cfg: Config, db, creator: Creator, title: str, segments: list[d
     return snap(resp.parsed_output.moments, segments, c["min_seconds"], c["max_seconds"], used)
 
 
+def clean_title(t: str) -> str:
+    """Safety net for the title rule: drop quotation marks and colons, collapse spaces, cap at 70 chars."""
+    t = re.sub(r"[\"\u201c\u201d\u2018\u2019']", lambda m: "'" if m.group(0) in "\u2019'" else "", t)
+    t = re.sub(r"\s*:\s*", " ", t)
+    t = re.sub(r"\s+", " ", t).strip(" -\u2014|")
+    return t[:70].rstrip()
+
+
 def snap(moments: list[Moment], segments: list[dict], min_s: float, max_s: float,
          used: list[tuple[float, float]] | None = None) -> list[Moment]:
     """Align to word boundaries, enforce length, drop overlaps (with each other and with already-cut moments)."""
@@ -190,6 +204,7 @@ def snap(moments: list[Moment], segments: list[dict], min_s: float, max_s: float
                 m.start = min(starts, key=lambda t: abs(t - m.start))
             if ends:
                 m.end = min(ends, key=lambda t: abs(t - m.end))
+        m.title = clean_title(m.title)
         m.start = max(0.0, m.start - 0.15)
         m.end = m.end + 0.35
         if m.end - m.start > max_s:
