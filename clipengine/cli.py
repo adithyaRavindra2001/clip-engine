@@ -7,6 +7,7 @@
   clip upload                    publish today's pack: YouTube Studio upload + Content Rewards submission
   clip login                     open the automation Chrome profile to sign in once
   clip tally                     everything published so far (tally/uploads.csv)
+  clip reconcile                 safety net: submit public videos missing on Content Rewards
   clip posted NAME URL           log a clip you uploaded by hand
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
@@ -99,6 +100,10 @@ def cmd_login(cfg, db, args):
     uploader.login(cfg)
 
 
+def cmd_reconcile(cfg, db, args):
+    uploader.reconcile(cfg, db, dry_run=args.dry_run, force=args.force)
+
+
 def cmd_tally(cfg, db, args):
     rows = uploader.tally_rows(cfg)
     if not rows:
@@ -174,6 +179,11 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("login", help="open the automation Chrome profile to sign in to YouTube + Content Rewards").set_defaults(fn=cmd_login)
 
     sub.add_parser("tally", help="list everything published (tally/uploads.csv)").set_defaults(fn=cmd_tally)
+
+    rc = sub.add_parser("reconcile", help="submit any public YouTube video that is missing on Content Rewards (30-min window)")
+    rc.add_argument("--dry-run", action="store_true")
+    rc.add_argument("--force", action="store_true", help="try to submit even videos older than the 30-minute window")
+    rc.set_defaults(fn=cmd_reconcile)
 
     po = sub.add_parser("posted", help="log a clip you uploaded by hand: clip posted fomo-01 https://youtube.com/shorts/...")
     po.add_argument("name"); po.add_argument("url"); po.add_argument("--date", default=None)

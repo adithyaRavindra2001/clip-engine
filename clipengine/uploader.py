@@ -303,15 +303,17 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
         time.sleep(0.5)
     else:
         raise RuntimeError("Submit button never enabled (site checks failed: linked account / already submitted / 30-minute rule?)")
+    if confirm.get_attribute("aria-disabled") == "true" or not confirm.is_enabled():
+        # Read the dialog's own checklist so the reason is in the log (linked account / already submitted / 30 min).
+        dlg = page.locator("[role=dialog]").first.inner_text() if page.locator("[role=dialog]").count() else page.inner_text("body")
+        raise RuntimeError("Submit button stayed disabled; dialog says: " + " | ".join(l.strip() for l in dlg.splitlines() if l.strip())[:300])
     confirm.click()
     _sleep(2.5, 4.0)
     _debug(page, "after-submit", cfg)   # always keep a picture of what the site said
-    body = page.inner_text("body").lower()
-    if re.search(r"(something went wrong|failed|not eligible|already (been )?submitted|not (posted )?within|must be posted|link(ed)? (an|your) account)", body):
-        raise RuntimeError("Content Rewards rejected the submission: " + re.search(r"(something went wrong|failed|not eligible|already (been )?submitted|not (posted )?within|must be posted|link(ed)? (an|your) account)", body).group(0))
-    # the dialog should be gone and the submissions count should include this clip
-    if page.locator("[role=dialog]").count() and page.get_by_text(re.compile(r"submit clip link", re.I)).count():
-        raise RuntimeError("submission dialog is still open after clicking Submit")
+    # The only reliable success signal: the video now appears on the Submissions page.
+    vid = re.search(r"(?:v=|/shorts/|youtu\.be/)([\w-]{11})", short_url).group(1)
+    if vid not in cr_submissions(page):
+        raise RuntimeError("submitted, but the clip is not on the Submissions page afterwards")
 
 
 # ---------- tally ----------
@@ -467,3 +469,128 @@ def login(cfg: Config) -> None:
         pass
     pw.stop()
     print("Profile saved. Run `clip upload --dry-run` next.")
+
+
+# ---------- reconcile: every public video on the channel must be submitted ----------
+
+def _api_key(cfg: Config) -> str | None:
+    import os
+    k = (cfg.raw.get("youtube") or {}).get("api_key") or os.environ.get("YOUTUBE_API_KEY")
+    if k:
+        return k
+    env = cfg.root / ".env"
+    if env.exists():
+        m = re.search(r"YOUTUBE_API_KEY=[\"']?([^\s'\"]+)", env.read_text())
+        if m:
+            return m.group(1)
+    return None
+
+
+def channel_videos(cfg: Config, channel: str, max_items: int = 200) -> list[dict]:
+    """Public videos on the channel via the Data API uploads playlist (1 quota unit per 50 videos)."""
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    key = _api_key(cfg)
+    if not key:
+        raise SystemExit("YOUTUBE_API_KEY missing (.env)")
+    uploads = "UU" + channel[2:]
+    out, token = [], None
+    while len(out) < max_items:
+        q = {"part": "snippet,status,contentDetails", "playlistId": uploads, "maxResults": 50, "key": key}
+        if token:
+            q["pageToken"] = token
+        with urllib.request.urlopen("https://www.googleapis.com/youtube/v3/playlistItems?" + urllib.parse.urlencode(q), timeout=30) as r:
+            data = _json.load(r)
+        for it in data.get("items", []):
+            sn, st = it["snippet"], it.get("status", {})
+            out.append({"id": sn["resourceId"]["videoId"], "title": sn["title"],
+                        "published_at": sn.get("publishedAt") or it.get("contentDetails", {}).get("videoPublishedAt"),
+                        "privacy": st.get("privacyStatus")})
+        token = data.get("nextPageToken")
+        if not token:
+            break
+    return [v for v in out if v["privacy"] == "public"]
+
+
+def cr_submissions(page) -> set[str]:
+    """YouTube video ids already submitted on Content Rewards (links on the Submissions page)."""
+    page.goto("https://contentrewards.com/c/submissions", wait_until="domcontentloaded")
+    page.wait_for_timeout(5000)
+    for _ in range(6):   # load more, if the page paginates on scroll
+        page.mouse.wheel(0, 4000)
+        page.wait_for_timeout(800)
+    hrefs = page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
+    ids = set()
+    for h in hrefs:
+        m = re.search(r"(?:v=|/shorts/|youtu\.be/)([\w-]{11})", h)
+        if m:
+            ids.add(m.group(1))
+    return ids
+
+
+def _campaign_for(cfg: Config, db, vid: str, title: str) -> tuple[str | None, str | None]:
+    """(campaign_url, pack name) for a video: by recorded URL, then by pack title, then by DB creator."""
+    packs = sorted((cfg.root / "todays-yt").glob("????-??-??"), reverse=True)
+    entries = [e for p in packs if (p / "UPLOAD.txt").exists() for e in parse_pack(p / "UPLOAD.txt")]
+    for e in entries:
+        if e["posted"] and vid in e["posted"]:
+            return e["campaign_url"], e["name"]
+    for e in entries:
+        if e["title"].strip().lower() == title.strip().lower():
+            return e["campaign_url"], e["name"]
+    row = db.execute("SELECT v.creator FROM clips c JOIN videos v ON v.id=c.video_id WHERE c.posted_url LIKE ?", (f"%{vid}%",)).fetchone()
+    if row:
+        c = cfg.creator(row["creator"])
+        m = re.search(r"https://contentrewards\.com/\S+", (c.permission if c else "") or "")
+        if m:
+            return m.group(0).rstrip(")"), None
+    # last resort: a single-campaign hint from hashtags in the title is not reliable; give up
+    return None, None
+
+
+def reconcile(cfg: Config, db, dry_run: bool = False, window_min: int = 30, force: bool = False) -> None:
+    """Nightly safety net: anything public on YouTube but missing on Content Rewards gets submitted
+    (if still inside the campaign's posting window) or reported."""
+    from datetime import timezone
+    pw, ctx = launch(cfg)
+    page = ctx.new_page()
+    try:
+        channel = _channel(page)
+        videos = channel_videos(cfg, channel)
+        submitted = cr_submissions(page)
+        print(f"channel {channel}: {len(videos)} public video(s); Content Rewards has {len(submitted)} submission(s)")
+        missing = [v for v in videos if v["id"] not in submitted]
+        if not missing:
+            print("all public videos are submitted")
+            return
+        now = datetime.now(timezone.utc)
+        for v in missing:
+            url = YT_SHORT.format(id=v["id"])
+            age = (now - datetime.fromisoformat(v["published_at"].replace("Z", "+00:00"))).total_seconds() / 60 if v["published_at"] else 1e9
+            campaign, name = _campaign_for(cfg, db, v["id"], v["title"])
+            tag = f"{v['title'][:60]!r} ({url}, published {age:.0f} min ago)"
+            if not campaign:
+                print(f"  ? no campaign known for {tag}: submit by hand"); continue
+            if age > window_min and not force:
+                print(f"  x MISSED {tag}: outside the {window_min}-minute window, cannot be submitted now"); continue
+            if dry_run:
+                print(f"  would submit {tag} -> {campaign}"); continue
+            try:
+                content_rewards_submit(page, cfg, campaign, url)
+                stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                if name:
+                    day = next((p.name for p in sorted((cfg.root / "todays-yt").glob("????-??-??"), reverse=True)
+                                if (p / "UPLOAD.txt").exists() and any(e["name"] == name for e in parse_pack(p / "UPLOAD.txt"))), None)
+                    if day:
+                        _note(cfg.root / "todays-yt" / day / "UPLOAD.txt", name, f"SUBMITTED: {stamp} (reconcile)")
+                tally_add(cfg, date.today().isoformat(), name or v["id"], (name or "?").rsplit("-", 1)[0], v["title"], url, stamp, stamp, "reconcile")
+                db.execute("UPDATE clips SET status='posted', posted_url=? WHERE posted_url IS NULL AND title=?", (url, v["title"]))
+                db.commit()
+                print(f"  + submitted {tag}")
+            except Exception as ex:
+                shot = _debug(page, "reconcile", cfg)
+                print(f"  ! failed {tag}: {ex} (screenshot {shot})")
+    finally:
+        ctx.close()
+        pw.stop()
