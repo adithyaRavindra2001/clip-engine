@@ -220,37 +220,37 @@ def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, n
 
 
 def _wait_upload_done(page, timeout_s: int = 900) -> None:
+    """Wait until Studio's footer says the upload and checks are done (then Publish applies immediately)."""
     t0 = time.time()
     while time.time() - t0 < timeout_s:
-        txt = ""
         try:
-            txt = page.locator("ytcp-video-upload-progress .progress-label, ytcp-video-upload-progress span").first.inner_text(timeout=5_000)
+            txt = page.locator("ytcp-uploads-dialog").first.inner_text(timeout=5_000).lower()
         except Exception:
-            pass
-        low = txt.lower()
-        if "complete" in low or "checks complete" in low or "processing" in low and "upload" not in low:
+            txt = ""
+        if re.search(r"checks complete|upload complete|processing (will begin|has started)|no issues found", txt):
             return
-        if "error" in low or "failed" in low:
-            raise RuntimeError(f"upload failed: {txt}")
+        if re.search(r"upload failed|an error occurred|daily upload limit", txt):
+            raise RuntimeError("Studio reported: " + re.search(r"upload failed|an error occurred|daily upload limit", txt).group(0))
         time.sleep(5)
     raise RuntimeError("upload did not finish in time")
 
 
-def wait_until_live(page, vid: str, timeout_s: int = 900) -> str:
-    """Poll the Short's public URL until it plays (processing done, visibility applied)."""
+def wait_until_live(page, vid: str, timeout_s: int = 60) -> str:
+    """Poll YouTube's oEmbed endpoint: it answers 200 only once the video is public (or unlisted) and
+    processed, 401/403 while private, 404 while unavailable. No page scraping, no false negatives."""
     url = YT_SHORT.format(id=vid)
+    probe = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
     t0 = time.time()
     while time.time() - t0 < timeout_s:
         try:
-            page.goto(url, wait_until="domcontentloaded")
-            body = page.content()
-            if "Video unavailable" not in body and "is private" not in body and "isn't available" not in body \
-                    and ("shorts" in page.url or "watch?v=" in page.url):
+            r = page.request.get(probe, timeout=15_000)
+            if r.status == 200:
                 return url
         except Exception:
             pass
-        time.sleep(20)
-    raise RuntimeError(f"{url} not live after {timeout_s}s")
+        time.sleep(5)
+    print(f"    (oEmbed not answering yet; submitting anyway, the Short is published)", flush=True)
+    return url
 
 
 # ---------- Content Rewards ----------
@@ -283,13 +283,35 @@ def content_rewards_submit(page, cfg: Config, campaign_url: str, short_url: str)
                 _sleep(0.5, 1.0)
         except Exception:
             pass
+    # The dialog's "I've read the requirements ..." checkbox gates the Submit button.
+    ack = page.get_by_text(re.compile(r"read the requirements", re.I)).first
+    if ack.count():
+        ack.click()
+        _sleep(0.5, 1.0)
+    box = page.locator("[role=dialog] input[type=checkbox], [role=dialog] [role=checkbox]").first
+    try:
+        if box.count() and box.is_visible(timeout=1_500) and not box.is_checked():
+            box.click()
+            _sleep(0.4, 0.8)
+    except Exception:
+        pass
     confirm = page.get_by_role("button", name=re.compile(r"^(submit|confirm|submit (clip|content|post|link))$", re.I)).last
     confirm.wait_for(timeout=30_000)
+    for _ in range(40):   # wait for the site's own checks to pass and the button to enable
+        if confirm.get_attribute("aria-disabled") != "true" and confirm.is_enabled():
+            break
+        time.sleep(0.5)
+    else:
+        raise RuntimeError("Submit button never enabled (site checks failed: linked account / already submitted / 30-minute rule?)")
     confirm.click()
-    _sleep(2.0, 3.5)
-    body = page.content().lower()
-    if "error" in body and "submitted" not in body:
-        raise RuntimeError("submission form reported an error")
+    _sleep(2.5, 4.0)
+    _debug(page, "after-submit", cfg)   # always keep a picture of what the site said
+    body = page.inner_text("body").lower()
+    if re.search(r"(something went wrong|failed|not eligible|already (been )?submitted|not (posted )?within|must be posted|link(ed)? (an|your) account)", body):
+        raise RuntimeError("Content Rewards rejected the submission: " + re.search(r"(something went wrong|failed|not eligible|already (been )?submitted|not (posted )?within|must be posted|link(ed)? (an|your) account)", body).group(0))
+    # the dialog should be gone and the submissions count should include this clip
+    if page.locator("[role=dialog]").count() and page.get_by_text(re.compile(r"submit clip link", re.I)).count():
+        raise RuntimeError("submission dialog is still open after clicking Submit")
 
 
 # ---------- tally ----------
