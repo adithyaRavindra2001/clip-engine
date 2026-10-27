@@ -89,7 +89,9 @@ def check_active(cfg: Config, page) -> list[dict]:
             continue
         st = campaign_status(page, m.group(0))
         st["creator"] = c.name
-        st["exhausted"] = (st["left"] is not None and st["total"] and st["left"] / st["total"] < 0.03) or st["accepting"] is False
+        # Budget is reserved first-come on Content Rewards: clips cut into the last 15% rarely get paid.
+        st["exhausted"] = ((st["left"] is not None and st["total"] and (st["left"] / st["total"] < 0.15 or st["left"] < 200))
+                           or st["accepting"] is False)
         rows.append(st)
     return rows
 
@@ -151,7 +153,7 @@ def discover(page, known_urls: set[str], limit: int = 150, min_left: float = 500
         burn = c["used"] / days                      # $ per day
         days_left = c["left"] / burn if burn > 0 else 99
         c["days_left"] = round(days_left, 1)
-        c["score"] = (c["cpm"] * min(c["left"], 20000) / (1 + (c["clippers"] or 0) / 200)
+        c["score"] = (c["cpm"] ** 0.5 * min(c["left"], 20000) / (5 + (c["clippers"] or 0))
                       * (1.3 if days <= 2 else 1.0 if days <= 7 else 0.8)
                       * (0.5 if days_left < 3 else 1.0))
     out.sort(key=lambda c: -c["score"])
@@ -182,6 +184,15 @@ def enrich(page, cands: list[dict], max_pages: int = 15) -> list[dict]:
             m = re.search(r"\$([\d.]+)\s*(?:/|per)\s*1K", t, re.I)
             if m:
                 c["cpm"] = float(m.group(1))
+            m = re.search(r"Min payout\s*\$([\d.,]+)", t, re.I)
+            c["min_payout"] = _money("$" + m.group(1)) if m else None
+            if c["min_payout"] is not None and c["cpm"]:
+                c["floor_views"] = int(c["min_payout"] / c["cpm"] * 1000)   # views a clip needs before it earns anything
+                # A $12.50 floor at $1.25 CPM needs 10k views per clip: out of reach for a new channel. Keep floors <= $3
+                # (<= ~3k views) unless the rate is unusually high.
+                c["blocked"] = c["blocked"] or (c["min_payout"] > 3 and c["cpm"] < 3)
+                if c["min_payout"] > 3 and c["cpm"] < 3:
+                    c["card"] = (c.get("card") or "") + f"  [skipped: min payout ${c['min_payout']:.2f} needs ~{c['floor_views']:,} views/clip]"
             c["youtube"] = bool(re.search(r"\bYouTube\b", t))
             c["tiktok_only"] = bool(re.search(r"\bTikTok\b|\bInstagram\b", t)) and not c["youtube"]
             c["blocked"] = bool(BLOCKLIST.search(t))
