@@ -29,7 +29,7 @@ import yaml
 from .config import Config
 from . import uploader
 
-LISTING = "https://contentrewards.com/c/campaigns"
+LISTING = "https://contentrewards.com/c/discover"
 BLOCKLIST = re.compile(r"casino|gambl|slots|bet(ting)?\b|stake\b|shuffle|crypto casino|onlyfans|adult", re.I)
 
 
@@ -104,34 +104,52 @@ def mark_ended(cfg: Config, names: list[str]) -> None:
 
 # ---------- 2. discover ----------
 
-def discover(page, known_urls: set[str], limit: int = 60) -> list[dict]:
+CARD = re.compile(r"^(?P<brand>.+?) · (?P<age>\S+) (?P<title>.+?) \$(?P<used>[\d.,]+[KkMm]?) /\$(?P<total>[\d.,]+[KkMm]?) "
+                  r"(?P<clippers>[\d.,]+[KkMm]?) \$(?P<cpm>[\d.]+)(?:–\$(?P<cpm_hi>[\d.]+))?/1K")
+
+
+def _num(s: str) -> float:
+    return _money("$" + s)
+
+
+def discover(page, known_urls: set[str], limit: int = 150, min_left: float = 500, min_cpm: float = 0.75) -> list[dict]:
+    """Every card on the Discover page, parsed, minus joined/parked ones and obvious non-starters."""
     page.goto(LISTING, wait_until="domcontentloaded")
     page.wait_for_timeout(5000)
-    for _ in range(8):
-        page.mouse.wheel(0, 5000)
+    seen_n = -1
+    for _ in range(20):
+        page.mouse.wheel(0, 6000)
         page.wait_for_timeout(700)
+        n = page.locator('a[href*="/c/campaigns/"]').count()
+        if n == seen_n:
+            break
+        seen_n = n
     cards = page.eval_on_selector_all(
         'a[href*="/c/campaigns/"]',
         "els => els.map(e => ({href: e.href, text: (e.innerText || '').replace(/\\s+/g, ' ').trim()}))")
     seen, out = set(), []
     for c in cards:
-        url = c["href"].split("?")[0]
-        if url in seen or url.rstrip("/") == LISTING or url in known_urls:
+        url = c["href"].split("?")[0].rstrip("/")
+        if url in seen or url in known_urls or not re.search(r"/c/campaigns/[\w-]{8,}$", url):
             continue
         seen.add(url)
-        text = c["text"]
-        if not text or len(text) < 10:
+        m = CARD.search(c["text"])
+        if not m:
             continue
-        cpm = re.search(r"\$([\d.]+)\s*(?:/|per)\s*1K", text, re.I)
-        out.append({"url": url, "card": text[:300], "cpm": float(cpm.group(1)) if cpm else None,
-                    "youtube": bool(re.search(r"youtube|shorts", text, re.I)),
-                    "blocked": bool(BLOCKLIST.search(text))})
-        if len(out) >= limit:
-            break
-    return out
+        d = m.groupdict()
+        used, total = _num(d["used"]), _num(d["total"])
+        cand = {"url": url, "brand": d["brand"], "title": d["title"], "age": d["age"], "used": used, "total": total,
+                "left": total - used, "clippers": int(_num(d["clippers"])), "cpm": float(d["cpm"]),
+                "card": c["text"][:300], "blocked": bool(BLOCKLIST.search(c["text"]))}
+        if cand["blocked"] or cand["left"] < min_left or cand["cpm"] < min_cpm:
+            continue
+        out.append(cand)
+    # best first: money left weighted by rate, discounted by competition
+    out.sort(key=lambda c: -(c["cpm"] * min(c["left"], 20000) / (1 + (c["clippers"] or 0) / 200)))
+    return out[:limit]
 
 
-def enrich(page, cands: list[dict], max_pages: int = 20) -> list[dict]:
+def enrich(page, cands: list[dict], max_pages: int = 15) -> list[dict]:
     """Open the top candidate pages for budget, platforms, CPM, clipper count, and the public brief text."""
     for c in cands[:max_pages]:
         try:
@@ -147,7 +165,7 @@ def enrich(page, cands: list[dict], max_pages: int = 20) -> list[dict]:
             if m:
                 c["cpm"] = float(m.group(1))
             c["youtube"] = bool(re.search(r"\bYouTube\b", t))
-            c["tiktok_only"] = bool(re.search(r"\bTikTok\b", t)) and not c["youtube"]
+            c["tiktok_only"] = bool(re.search(r"\bTikTok\b|\bInstagram\b", t)) and not c["youtube"]
             c["blocked"] = bool(BLOCKLIST.search(t))
             m = re.search(r"(\d[\d,]*)\s*(?:clippers|creators|members)", t, re.I)
             c["clippers"] = int(m.group(1).replace(",", "")) if m else None
@@ -199,7 +217,7 @@ BRIEF:
 
 
 def rank(cands: list[dict]) -> list[dict]:
-    short = [c for c in cands if not c.get("blocked") and not c.get("tiktok_only") and c.get("youtube", True)]
+    short = [c for c in cands if c.get("page_text") and not c.get("blocked") and not c.get("tiktok_only") and c.get("youtube", True)]
     if not short:
         return []
     payload = "\n\n".join(
