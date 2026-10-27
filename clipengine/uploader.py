@@ -175,9 +175,22 @@ def _limit_hit(page) -> bool:
         return False
 
 
+def _channel_healthy(page) -> None:
+    """Stop the whole run if Studio shows a strike, warning or policy notice: keep publishing would make it worse."""
+    try:
+        t = page.inner_text("body")
+    except Exception:
+        return
+    if re.search(r"community guidelines (strike|warning)|copyright strike|your channel (has|received) a (strike|warning)|"
+                 r"channel (is )?(suspended|terminated)|under review for|policy violation", t, re.I):
+        _debug(page, "channel-notice", Config(Path.cwd()))
+        raise RuntimeError("YouTube Studio is showing a strike/warning notice; stopping all uploads until a human looks")
+
+
 def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, name: str = "") -> str:
     """Upload one file (or resume its draft), fill details, publish as Public (not for kids). Returns the video id."""
     channel = _channel(page)
+    _channel_healthy(page)
     print(f"    studio channel {channel}", flush=True)
     if not (name and _open_draft(page, channel, name, title)):
         page.goto(f"{STUDIO}/channel/{channel}/videos/upload?d=ud", wait_until="domcontentloaded")

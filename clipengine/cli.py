@@ -148,9 +148,20 @@ def cmd_stats(cfg, db, args):
         print(f"{r['creator']:<22}{r['n']:>8}{r['ok'] or 0:>10}{r['bad'] or 0:>10}{r['views']:>12,}{r['money']:>10.2f}")
 
 
+def _project_root() -> Path:
+    """The clip-engine checkout this package lives in (so `clip` works from any directory), else the cwd."""
+    here = Path(__file__).resolve().parent.parent
+    if (here / "config.yaml").exists():
+        return here
+    cwd = Path.cwd().resolve()
+    if (cwd / "config.yaml").exists():
+        return cwd
+    raise SystemExit(f"config.yaml not found in {here} or {cwd}; pass --root")
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="clip", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--root", default=".", help="folder containing config.yaml and creators.yaml")
+    p.add_argument("--root", default=None, help="folder containing config.yaml (default: the project the command is installed in)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="clip one VOD or local file")
@@ -208,7 +219,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("stats", help="performance summary").set_defaults(fn=cmd_stats)
 
     args = p.parse_args(argv)
-    cfg = Config(Path(args.root).resolve())
+    root = Path(args.root).resolve() if args.root else _project_root()
+    cfg = Config(root)
     db = store.connect(cfg.data_dir)
     args.fn(cfg, db, args)
 

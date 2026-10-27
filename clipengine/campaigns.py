@@ -237,9 +237,14 @@ def rank(cands: list[dict]) -> list[dict]:
 def join(page, url: str) -> bool:
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_timeout(4000)
+    if page.get_by_role("button", name=re.compile(r"^sign in$", re.I)).count():
+        raise RuntimeError("Content Rewards is signed out in the automation profile (run `clip login`)")
+    if re.search(r"submit clip", _text(page), re.I):
+        return True   # already joined
     btn = page.get_by_role("button", name=re.compile(r"join campaign", re.I)).first
-    if not btn.count() or not btn.is_visible():
-        return bool(re.search(r"submit clip", _text(page), re.I))   # already joined
+    if not btn.count():
+        return False
+    btn.scroll_into_view_if_needed()
     btn.click()
     page.wait_for_timeout(3000)
     # some campaigns show a requirements/acknowledge dialog
@@ -344,7 +349,10 @@ def run(cfg: Config, db, min_active: int = 5, auto_join: bool = False, dry_run: 
         if auto_join and need and not dry_run:
             lines += ["", "## Joined + onboarded"]
             for r in [r for r in ranked if r.get("join")][:need]:
-                ok = join(page, r["url"])
+                try:
+                    ok = join(page, r["url"])
+                except RuntimeError as ex:
+                    lines.append(f"- stopped: {ex}"); break
                 if not ok:
                     lines.append(f"- {r.get('title')}: could not join (see data/upload-debug)"); uploader._debug(page, "join", cfg); continue
                 res = onboard(cfg, r["url"], brief_text(page, r["url"]), r.get("cpm"))

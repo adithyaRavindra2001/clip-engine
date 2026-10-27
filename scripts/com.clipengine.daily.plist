@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Runs the campaign check + scripts/daily_claude.sh every day at 19:00 IST; the pack is ready before the 21:30 upload job.
+  Runs the campaign check + scripts/daily_claude.sh every day at 17:00 IST; the pack is ready before the 21:30 upload job.
   Install:  ./scripts/install_schedule.sh
   Remove:   launchctl unload ~/Library/LaunchAgents/com.clipengine.daily.plist
 -->
@@ -14,7 +14,7 @@
     <string>cd "__ROOT__" &amp;&amp; ./scripts/daily_claude.sh 1</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
+  <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>
   <key>StandardOutPath</key><string>__HOME__/Library/Logs/clipengine/daily.log</string>
   <key>StandardErrorPath</key><string>__HOME__/Library/Logs/clipengine/daily.log</string>
 </dict>
