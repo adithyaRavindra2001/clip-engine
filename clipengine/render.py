@@ -52,6 +52,86 @@ def detect_faces(path: Path, samples: int = 12) -> list[tuple[int, int, int, int
     return boxes
 
 
+def speaker_segments(path: Path, duration: float, bounds: list[float], fps: float = 4.0,
+                     min_hold: float = 1.4) -> list[tuple[float, float, float]]:
+    """Who is talking, when: for a wide two-or-three-person shot, returns (start, end, face centre x) segments so
+    the 9:16 crop can follow the active speaker. Faces are clustered by position; the speaker in each caption
+    window is the face whose mouth region moves the most. Returns [] when there is only one person."""
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    cap = cv2.VideoCapture(str(path))
+    native = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1
+    step = max(1, int(round(native / fps)))
+    scale = min(1.0, 1280 / W)         # detect on a 1280-wide frame: 3x faster on 4K sources, mouth motion still readable
+    samples = []   # (t, small gray, [face boxes in SOURCE pixels])
+    fi = 0
+    while fi < total:
+        ok = cap.grab()
+        if not ok:
+            break
+        if fi % step == 0:
+            ok, frame = cap.retrieve()
+            if not ok:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if scale < 1.0:
+                gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            h = gray.shape[0]
+            found = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(h // 20, h // 20))
+            samples.append((fi / native, gray, [tuple(int(v / scale) for v in b) for b in found]))
+        fi += 1
+    cap.release()
+    if len(samples) < 4:
+        return []
+    # Cluster face centres across all samples into persons.
+    clusters: list[dict] = []
+    for _, _, boxes in samples:
+        for x, y, w, h in boxes:
+            cx = x + w / 2
+            hit = next((c for c in clusters if abs(c["cx"] - cx) < 0.10 * W), None)
+            if hit:
+                hit["n"] += 1; hit["boxes"].append((x, y, w, h))
+                hit["cx"] = float(np.median([b[0] + b[2] / 2 for b in hit["boxes"]]))
+            else:
+                clusters.append({"cx": cx, "n": 1, "boxes": [(x, y, w, h)]})
+    people = [c for c in clusters if c["n"] >= 0.25 * len(samples)]
+    if len(people) < 2:
+        return []
+    for c in people:   # a stable box per person (median), mouth = lower third
+        x, y, w, h = (int(np.median([b[i] for b in c["boxes"]]) * scale) for i in range(4))   # small-frame pixels
+        c["mouth"] = (x + w // 5, y + int(h * 0.62), max(1, w - 2 * (w // 5)), max(1, int(h * 0.33)))
+    # Mouth motion per person per sample (frame difference inside the mouth box, normalised by its area).
+    energy = {i: [] for i in range(len(people))}
+    times = []
+    for (t0, g0, _), (t1, g1, _) in zip(samples, samples[1:]):
+        times.append(t1)
+        for i, c in enumerate(people):
+            x, y, w, h = c["mouth"]
+            d = cv2.absdiff(g1[y:y + h, x:x + w], g0[y:y + h, x:x + w])
+            energy[i].append(float(d.mean()) if d.size else 0.0)
+    # Decide per caption window, with a hold so the crop doesn't flicker.
+    edges = sorted({0.0, duration, *[b for b in bounds if 0 < b < duration]})
+    out: list[tuple[float, float, float]] = []
+    current = None
+    for a, b in zip(edges, edges[1:]):
+        idx = [k for k, t in enumerate(times) if a <= t < b]
+        if not idx:
+            continue
+        scores = [float(np.mean([energy[i][k] for k in idx])) for i in range(len(people))]
+        best = int(np.argmax(scores))
+        if current is not None and scores[best] < 1.3 * scores[current]:
+            best = current
+        if out and out[-1][2] == people[best]["cx"]:
+            out[-1] = (out[-1][0], b, out[-1][2])
+        elif out and b - out[-1][0] < min_hold and len(out) > 0 and (out[-1][1] - out[-1][0]) < min_hold:
+            out[-1] = (out[-1][0], b, out[-1][2])   # too short to switch: extend the previous segment
+        else:
+            out.append((a, b, people[best]["cx"]))
+        current = next(i for i, c in enumerate(people) if c["cx"] == out[-1][2])
+    return out if len({seg[2] for seg in out}) >= 2 else []
+
+
 def _region_sharpness(path: Path, cam: tuple, samples: int = 4) -> float:
     """Median Laplacian variance of the candidate facecam region, upscaled as the split layout would show it."""
     x, y, w, h = (int(v) for v in cam)
@@ -159,6 +239,12 @@ def video_filter(L: dict, crop_top: float = 0.0, crop_bottom: float = 0.0,
         x_lo, x_hi = _even(W * crop_left), _even(W * (1 - crop_right))
         cw = min(_even(ch * OUT_W / OUT_H), _even(x_hi - x_lo))
         x = _even(min(max(L["cx"] - cw / 2, x_lo), x_hi - cw))
+        segs = L.get("cx_segments") or []
+        if len(segs) >= 2:
+            # Active-speaker crop: the window jumps to whoever is talking (a hard cut on a caption boundary).
+            xs = [_even(min(max(cx - cw / 2, x_lo), x_hi - cw)) for _, _, cx in segs]
+            expr = "+".join(f"{xv}*between(t,{a:.3f},{b:.3f})" for (a, b, _), xv in zip(segs, xs))
+            return f"[0:v]crop={cw}:{ch}:'{expr}':{y0},scale={OUT_W}:{OUT_H}:{SCALE},setsar=1[base]"
         return f"[0:v]crop={cw}:{ch}:{x}:{y0},scale={OUT_W}:{OUT_H}:{SCALE},setsar=1[base]"
 
     # split: facecam on top, centre of gameplay below
@@ -301,6 +387,7 @@ DEFAULT_BRAND = {
     "cut_pauses": 0.0,       # seconds: remove dead air longer than this between words (0 = off)
     "cut_pad": 0.12,         # breath left on each side of a removed pause
     "interrupt_every": 0.0,  # seconds: hard zoom toggle on a caption boundary about this often (0 = off)
+    "speaker_track": False,  # wide multi-person shots: crop follows whoever is talking
     "progress_bar": True,    # thin bar along the bottom edge that fills over the clip
     "music": True,           # mix a quiet bed from music/<mood>/ under the speech (skipped if no files)
     "music_db": -22,         # music level relative to full scale; speech ducks it further
@@ -449,6 +536,13 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
             beats = [_remap(t, cuts) for t in beats]
             print(f"    pauses cut: {duration:.1f}s -> {new_duration:.1f}s")
             duration = new_duration
+    if b.get("speaker_track") and L["kind"] == "crop" and words:
+        rel = [{**w, "start": w["start"] - offset, "end": w["end"] - offset} for w in words]
+        bounds = [c[0]["start"] for c in chunk_words(rel)]
+        segs = speaker_segments(src, duration, bounds)
+        if segs:
+            L["cx_segments"] = segs
+            print(f"    speaker crop: {len(segs)} segments across {len({s_[2] for s_ in segs})} people")
     ass = out.with_suffix(".ass")
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
                              accent=b["accent"], hook_animation=b["hook_animation"]))
@@ -456,7 +550,8 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src)
     punches = sorted(t for t in beats if 0.8 < t < duration - 0.4)[:2] if b.get("punch_in") else []
     windows = (interrupt_windows(words, offset, duration, float(b["interrupt_every"]), punches)
-               if b.get("punch_in") and float(b.get("interrupt_every") or 0) > 0 else [])
+               if b.get("punch_in") and float(b.get("interrupt_every") or 0) > 0
+               and len(L.get("cx_segments") or []) < 3 else [])
     if punches or windows:
         graph += ";" + punch_in_filter(punches, float(b.get("punch_in_zoom", 0.12)),
                                        focus_x=_face_x_frac(L, crop_left, crop_right), cuts=windows)
