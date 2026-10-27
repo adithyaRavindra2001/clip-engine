@@ -53,6 +53,8 @@ class Creator:
     permission: str = ""
     campaign_rules: str = ""
     required_tags: list[str] = field(default_factory=list)
+    instagram: bool = True                                   # also post this campaign's clips as Reels
+    instagram_tags: list[str] = field(default_factory=list)  # Instagram handles/hashtags the brief requires (replace YouTube ones)
     layout: str = "auto"
     facecam: list[float] | None = None
     # Fixed campaign footage (URLs or local files). `clip daily` rotates through these, cutting NEW moments

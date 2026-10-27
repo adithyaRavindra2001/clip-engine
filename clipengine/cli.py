@@ -8,6 +8,7 @@
   clip quota                     today's pack vs the 5-per-campaign target (--short: names still below it)
   clip notify TITLE BODY         push to your phone (Telegram/ntfy) + Mac notification; --setup-telegram once
   clip health                    morning audit: packed/published/submitted per campaign, launchd jobs, log errors
+  clip instagram                 post published clips as Reels through Meta's API and submit the links (--check first)
   clip login                     open the automation Chrome profile to sign in once
   clip tally                     everything published so far (tally/uploads.csv)
   clip reconcile                 safety net: submit public videos missing on Content Rewards
@@ -24,7 +25,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import campaigns, discover, learn, morning, notify, pipeline, quota, review, store, uploader
+from . import campaigns, discover, instagram, learn, morning, notify, pipeline, quota, review, store, uploader
 from .config import Config
 
 
@@ -139,6 +140,13 @@ def cmd_health(cfg, db, args):
         sys.exit(1)
 
 
+def cmd_instagram(cfg, db, args):
+    if args.check:
+        print(instagram.check(cfg))
+        return
+    instagram.run(cfg, db, args.date, limit=args.limit, spacing=args.spacing, dry_run=args.dry_run)
+
+
 def cmd_login(cfg, db, args):
     uploader.login(cfg)
 
@@ -250,6 +258,12 @@ def main(argv: list[str] | None = None) -> None:
     u.add_argument("--only", default=None, help="only clips whose name starts with this, e.g. kai")
     u.add_argument("--dry-run", action="store_true")
     u.set_defaults(fn=cmd_upload)
+
+    ig = sub.add_parser("instagram", help="post the pack's published clips as Reels (official API) + submit the links")
+    ig.add_argument("--date", default=None); ig.add_argument("--limit", type=int, default=30)
+    ig.add_argument("--spacing", type=int, default=600); ig.add_argument("--dry-run", action="store_true")
+    ig.add_argument("--check", action="store_true", help="verify IG_USER_ID / IG_ACCESS_TOKEN and today's publishing quota")
+    ig.set_defaults(fn=cmd_instagram)
 
     sub.add_parser("login", help="open the automation Chrome profile to sign in to YouTube + Content Rewards").set_defaults(fn=cmd_login)
 

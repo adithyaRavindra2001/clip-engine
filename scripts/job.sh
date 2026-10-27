@@ -46,6 +46,7 @@ case "$JOB" in
   upload)
     clip upload --limit 30 --spacing 1500 || rc=$?     # 5 per campaign, ~25 min apart from 21:30 IST through the US day
     clip reconcile || true
+    if grep -q "^IG_ACCESS_TOKEN=." .env 2>/dev/null; then clip instagram --limit 10 --spacing 1200 || echo "[instagram] failed (exit $?)"; fi
     ;;
   health)  clip health || rc=$? ;;
   review)  exec clip review ;;

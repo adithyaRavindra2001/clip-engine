@@ -20,3 +20,5 @@ experiments/**/*.mp4
 data/browser-profile/
 data/upload-debug/
 assets/watermarks/*.png
+todays-yt/**/.ig-serve/
+tally/instagram.csv
