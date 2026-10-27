@@ -134,6 +134,20 @@ def _type_textbox(page, container_sel: str, text: str) -> None:
     # Studio's textbox is a contenteditable; insert_text keeps newlines and avoids per-key slowness.
     page.keyboard.insert_text(text)
     _sleep(0.4, 0.9)
+    _dismiss_suggestions(page)
+
+
+def _dismiss_suggestions(page) -> None:
+    """A '#hashtag' in the description opens Studio's hashtag-suggestion dropdown, which then sits over the
+    Next button and swallows clicks (stopped the 2026-10-27 night run). Blur the field and wait for it to go."""
+    try:
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        drop = page.locator("ytcp-social-suggestions-dropdown").first
+        if drop.count() and drop.is_visible():
+            page.locator("ytcp-uploads-dialog #dialog-title, ytcp-uploads-dialog h1").first.click(timeout=3000)
+            drop.wait_for(state="hidden", timeout=5000)
+    except Exception:
+        pass
 
 
 def _channel(page) -> str:
@@ -225,7 +239,12 @@ def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, n
         raise RuntimeError(f"could not read video id from {href!r}")
     vid = m.group(1)
     for _ in range(3):   # Details -> Video elements -> Checks -> Visibility
-        page.locator("#next-button").first.click()
+        _dismiss_suggestions(page)
+        try:
+            page.locator("#next-button").first.click(timeout=15_000)
+        except Exception:
+            _dismiss_suggestions(page)
+            page.locator("#next-button").first.click(force=True)   # last resort: the overlay is cosmetic
         _sleep(0.8, 1.6)
     page.locator('tp-yt-paper-radio-button[name="PUBLIC"]').first.click()
     _sleep(0.5, 1.0)
