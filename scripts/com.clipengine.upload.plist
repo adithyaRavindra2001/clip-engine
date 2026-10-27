@@ -1,23 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Publishes the latest pack from 21:30 IST = 12:00 US East (11:00 after 1 Nov): up to 10 clips, 45-90 min apart,
-  so the channel posts through the whole US afternoon and evening instead of one burst.
-  Needs the Mac awake (sudo pmset -c sleep 0) and a signed-in automation profile (clip login).
-  Install:  ./scripts/install_schedule.sh
-  Remove:   launchctl unload ~/Library/LaunchAgents/com.clipengine.upload.plist
+  21:30 IST = 12:00 US East: publish the day's pack ~25 min apart through the US afternoon/evening, then reconcile.
+  02:00 fires again only if the first run died: it publishes whatever is still unsubmitted. Needs the Mac awake + clip login.
+  Install:  ./scripts/install_schedule.sh      Remove: launchctl unload ~/Library/LaunchAgents/com.clipengine.upload.plist
 -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.clipengine.upload</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string><string>-lc</string>
-    <string>cd "/Users/adithya/Desktop/projects/clip-engine" &amp;&amp; source .venv/bin/activate &amp;&amp; clip upload --limit 10 --spacing 3600; clip reconcile</string>
+    <string>/bin/zsh</string>
+    <string>__HOME__/Library/Application Support/clipengine/job.sh</string>
+    <string>upload</string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-  <key>StandardOutPath</key><string>/Users/adithya/Library/Logs/clipengine/upload.log</string>
-  <key>StandardErrorPath</key><string>/Users/adithya/Library/Logs/clipengine/upload.log</string>
+  <array>
+    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/clipengine/upload.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/clipengine/upload.log</string>
 </dict>
 </plist>

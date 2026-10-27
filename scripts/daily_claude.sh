@@ -58,4 +58,24 @@ clip daily --max-videos "$MAX_VIDEOS" --no-prospects
 answer_pending
 clip daily --max-videos "$MAX_VIDEOS"
 clip morning ${MORNING_LIMIT:+--limit "$MORNING_LIMIT"}   # per campaign; default from config.yaml morning.per_campaign
+
+# The quota: EXACTLY morning.per_campaign clips per campaign in today's pack. `clip morning` never packs more
+# (it counts what is already in the folder); this loop keeps cutting until no campaign is short.
+# Each round cuts one more video per short campaign (new moments from the same source when nothing new exists).
+for round in 1 2 3 4; do
+  short="$(clip quota --short)"
+  [ -z "$short" ] && break
+  echo "--- quota round $round: still short -> $(echo "$short" | tr '\n' ' ')"
+  echo "$short" | while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    clip daily --only "$name" --max-videos 1 --force --no-prospects || true
+  done
+  answer_pending
+  echo "$short" | while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    clip daily --only "$name" --max-videos 1 --force --no-prospects || true
+    clip morning --creator "$name" >/dev/null || true
+  done
+done
+clip quota
 echo "=== $(date '+%F %T') daily done ==="

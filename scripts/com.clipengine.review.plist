@@ -6,8 +6,9 @@
   <key>Label</key><string>com.clipengine.review</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string><string>-lc</string>
-    <string>cd "__ROOT__" &amp;&amp; source .venv/bin/activate &amp;&amp; export PATH=/opt/homebrew/opt/ffmpeg-full/bin:$PATH &amp;&amp; clip review</string>
+    <string>/bin/zsh</string>
+    <string>__HOME__/Library/Application Support/clipengine/job.sh</string>
+    <string>review</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

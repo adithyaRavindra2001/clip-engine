@@ -5,6 +5,8 @@
   clip discover                  prospects report only
   clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN.mp4 + .jpg, one UPLOAD.txt
   clip upload                    publish today's pack: YouTube Studio upload + Content Rewards submission
+  clip quota                     today's pack vs the 5-per-campaign target (--short: names still below it)
+  clip health                    morning audit: packed/published/submitted per campaign, launchd jobs, log errors
   clip login                     open the automation Chrome profile to sign in once
   clip tally                     everything published so far (tally/uploads.csv)
   clip reconcile                 safety net: submit public videos missing on Content Rewards
@@ -21,7 +23,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import campaigns, discover, learn, morning, pipeline, review, store, uploader
+from . import campaigns, discover, learn, morning, pipeline, quota, review, store, uploader
 from .config import Config
 
 
@@ -38,10 +40,16 @@ def cmd_daily(cfg, db, args):
     enough = int(m["per_campaign"]) * int(m["stock_factor"])
     creators = sorted([c for c in cfg.creators() if c.allowed and "TEST ONLY" not in (c.permission or "")],
                       key=lambda c: -c.cpm)
+    only = getattr(args, "only", None)
+    if only:
+        creators = [c for c in creators if c.name.lower() == only.lower()]
+        if not creators:
+            raise SystemExit(f"no allowed campaign named {only!r}")
+    force = getattr(args, "force", False)
     # 1. Campaigns with fixed footage: cut NEW moments from the least-used source, best-paying campaign first.
     for c in [c for c in creators if c.sources]:
         stock = store.pending_count(db, c.name)
-        if stock >= enough:
+        if stock >= enough and not force:
             print(f"{c.name}: {stock} drafts in stock, skipping today's cut")
             continue
         for _ in range(args.max_videos):
@@ -60,14 +68,19 @@ def cmd_daily(cfg, db, args):
         vods = discover.fresh_vods(cfg)
         for c in rest:
             stock = store.pending_count(db, c.name)
-            if stock >= enough:
+            if stock >= enough and not force:
                 print(f"{c.name}: {stock} drafts in stock, skipping today's cut")
                 continue
-            new = [v for v in vods if v.creator == c.name and not store.video_seen(db, v.url)][:args.max_videos]
+            mine = [v for v in vods if v.creator == c.name]
+            new = [v for v in mine if not store.video_seen(db, v.url)][:args.max_videos]
+            if not new and force and mine:
+                # Top-up with nothing new on the channel: ask for NEW moments from the freshest VOD instead.
+                new = mine[:1]
+                print(f"{c.name}: no unseen VOD, re-cutting new moments from the newest one")
             print(f"{c.name}: {len(new)} new VOD(s) to process.")
             for v in new:
                 try:
-                    total += pipeline.process(cfg, db, v.url, v.creator, twitch_hotspots=v.hotspots)
+                    total += pipeline.process(cfg, db, v.url, v.creator, twitch_hotspots=v.hotspots, force=force)
                 except SystemExit as e:
                     print(f"  [waiting] {e}")
                 except Exception as e:
@@ -95,6 +108,27 @@ def cmd_morning(cfg, db, args):
 
 def cmd_upload(cfg, db, args):
     uploader.run(cfg, db, args.date, limit=args.limit, spacing=args.spacing, dry_run=args.dry_run, only=args.only)
+
+
+def cmd_quota(cfg, db, args):
+    short = quota.shortfall(cfg, args.date)
+    if args.short:
+        for name in short:
+            print(name)
+        return
+    target = int(cfg["morning"]["per_campaign"])
+    have = quota.packed(cfg, args.date)
+    for c in quota._active(cfg):
+        n = have.get(c.slug, 0)
+        print(f"  {c.name:<18} {n}/{target}" + ("" if n >= target else f"   needs {target - n} more"))
+    print("quota met" if not short else f"short: {', '.join(f'{k} {v}' for k, v in short.items())}")
+
+
+def cmd_health(cfg, db, args):
+    ok, text = quota.health(cfg, args.date, notify=not args.no_notify)
+    print(text)
+    if not ok:
+        sys.exit(1)
 
 
 def cmd_login(cfg, db, args):
@@ -173,7 +207,19 @@ def main(argv: list[str] | None = None) -> None:
     d = sub.add_parser("daily", help="discover + clip + prospects report (schedule this)")
     d.add_argument("--max-videos", type=int, default=1)
     d.add_argument("--no-prospects", action="store_true")
+    d.add_argument("--only", default=None, help="one campaign (creators.yaml name), used by the quota top-up")
+    d.add_argument("--force", action="store_true", help="cut even with drafts in stock; re-cut the newest VOD if nothing is new")
     d.set_defaults(fn=cmd_daily)
+
+    q = sub.add_parser("quota", help="today's pack vs the per-campaign target (morning.per_campaign)")
+    q.add_argument("--date", default=None)
+    q.add_argument("--short", action="store_true", help="print only the names of campaigns still below target, one per line")
+    q.set_defaults(fn=cmd_quota)
+
+    h = sub.add_parser("health", help="morning audit of yesterday's pack: packed/published/submitted per campaign + launchd jobs")
+    h.add_argument("--date", default=None, help="pack date to audit (default: yesterday)")
+    h.add_argument("--no-notify", action="store_true")
+    h.set_defaults(fn=cmd_health)
 
     sub.add_parser("discover", help="prospects report").set_defaults(fn=cmd_discover)
 

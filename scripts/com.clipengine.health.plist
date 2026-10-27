@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  09:00 IST: audit yesterday's pack (5 packed / 5 published / 5 submitted per campaign, jobs loaded, log errors)
+  and send a macOS notification either way.
+  Install:  ./scripts/install_schedule.sh      Remove: launchctl unload ~/Library/LaunchAgents/com.clipengine.health.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.clipengine.health</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>__HOME__/Library/Application Support/clipengine/job.sh</string>
+    <string>health</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/clipengine/health.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/clipengine/health.log</string>
+</dict>
+</plist>

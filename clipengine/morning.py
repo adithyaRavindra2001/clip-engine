@@ -64,7 +64,11 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
     db.commit()
 
     ranked = sorted(assessed, key=lambda t: -(0.6 * t[0]["score"] + 0.4 * t[1]["qa"]))
-    chosen, per_src, per_campaign = [], {}, {}
+    # "No more than per_campaign a day": clips already in today's pack (root + done/) count towards the cap.
+    from .quota import packed
+    already = packed(cfg, day)
+    per_campaign = {c.name: already.get(c.slug, 0) for c in cfg.creators() if c.slug}
+    chosen, per_src = [], {}
     for r, res in ranked:
         if res["qa"] < min_qa:
             db.execute("UPDATE clips SET status='rejected', reason=?, decided_at=CURRENT_TIMESTAMP WHERE id=?",
