@@ -144,9 +144,27 @@ def discover(page, known_urls: set[str], limit: int = 150, min_left: float = 500
         if cand["blocked"] or cand["left"] < min_left or cand["cpm"] < min_cpm:
             continue
         out.append(cand)
-    # best first: money left weighted by rate, discounted by competition
-    out.sort(key=lambda c: -(c["cpm"] * min(c["left"], 20000) / (1 + (c["clippers"] or 0) / 200)))
+    # best first: money left weighted by rate, discounted by competition, boosted when fresh (first-mover:
+    # budget intact, few clippers) and penalised when the burn rate says it will be empty within ~3 days.
+    for c in out:
+        days = max(_age_days(c["age"]), 0.25)
+        burn = c["used"] / days                      # $ per day
+        days_left = c["left"] / burn if burn > 0 else 99
+        c["days_left"] = round(days_left, 1)
+        c["score"] = (c["cpm"] * min(c["left"], 20000) / (1 + (c["clippers"] or 0) / 200)
+                      * (1.3 if days <= 2 else 1.0 if days <= 7 else 0.8)
+                      * (0.5 if days_left < 3 else 1.0))
+    out.sort(key=lambda c: -c["score"])
     return out[:limit]
+
+
+def _age_days(age: str) -> float:
+    """'3d' / '5h' / '2w' / '1mo' as shown on the Discover cards -> days."""
+    m = re.match(r"(\d+(?:\.\d+)?)\s*(mo|m|w|d|h)", age or "")
+    if not m:
+        return 7.0
+    n, u = float(m.group(1)), m.group(2)
+    return n * {"h": 1 / 24, "d": 1, "w": 7, "m": 30, "mo": 30}[u]
 
 
 def enrich(page, cands: list[dict], max_pages: int = 15) -> list[dict]:
