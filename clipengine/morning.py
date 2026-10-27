@@ -1,9 +1,9 @@
 """The morning pack: pick today's best clips automatically and lay them out for one-click uploading.
 
-    todays-yt/<date>/fomo-01/vid.mp4        the clip   (folder = campaign slug + number within that campaign)
-                             thumbnail.jpg  sharpest face frame + hook text
-                             info.txt       TITLE / DESCRIPTION / HASHTAGS / where to submit / checklist
-                     SUMMARY.txt            the day's list, in upload order, with why each was chosen
+    todays-yt/<date>/fomo-01.mp4    the clip   (name = campaign slug + number within that campaign)
+                     fomo-01.jpg    thumbnail: sharpest face frame + hook text
+                     UPLOAD.txt     ONE file with every clip in upload order: TITLE / DESCRIPTION / HASHTAGS /
+                                    where to submit / why it was picked
 
 Selection = Claude's performance score blended with the frame-level QA score; clips that fail QA are
 rejected with the reason recorded, so the learning loop still sees every decision.
@@ -81,17 +81,19 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
                                t[0]["creator"], -(0.6 * t[0]["score"] + 0.4 * t[1]["qa"])))
 
     root.mkdir(parents=True, exist_ok=True)
-    # Folders are <campaign slug>-NN; numbering continues per campaign when appending to today's pack.
-    existing = [p for p in root.iterdir() if p.is_dir() and re.fullmatch(r"[a-z0-9]+-\d+", p.name)]
+    # Files are <campaign slug>-NN.mp4; numbering continues per campaign when appending to today's pack.
+    existing = [p for p in root.glob("*.mp4") if re.fullmatch(r"[a-z0-9]+-\d+", p.stem)]
     counter = {}
     for p in existing:
-        slug_, n = p.name.rsplit("-", 1)
+        slug_, n = p.stem.rsplit("-", 1)
         counter[slug_] = max(counter.get(slug_, 0), int(n))
     summary = [f"TODAY'S UPLOADS — {day}", "",
-               "Upload in this order, spaced through the evening. Copy TITLE and DESCRIPTION from each info.txt.",
-               "Submit every URL on its campaign page right after posting (Reach campaigns: within 30 minutes).", ""]
+               "Upload in this order, spaced through the evening. For each clip: YouTube Studio > Create > Upload >",
+               "<name>.mp4, paste TITLE and DESCRIPTION (hashtags are already in the description), thumbnail <name>.jpg,",
+               "Not for kids, Public. Then copy the Short's URL, submit it on the campaign page straight away",
+               "(Reach campaigns: within 30 minutes) and paste it into the review page's Approved tab so views get tracked.", ""]
     if existing:
-        summary = ["", f"=== added later ({len(existing)} clips already packed above) ===", ""]
+        summary = ["", "", f"=== added later ({len(existing)} clips already packed above) ===", ""]
     pending_rules = sorted({r["creator"] for r, _ in chosen
                             if "PENDING" in ((cfg.creator(r["creator"]) or Creator("", "", "", "")).campaign_rules or "")})
     if pending_rules:
@@ -106,12 +108,10 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
             last_campaign = r["creator"]
         counter[creator.slug] = counter.get(creator.slug, 0) + 1
         name = f"{creator.slug}-{counter[creator.slug]:02d}"
-        folder = root / name
-        folder.mkdir(exist_ok=True)
-        shutil.copy2(r["path"], folder / "vid.mp4")
+        shutil.copy2(r["path"], root / f"{name}.mp4")
         src = Path(r["path"]).with_name("src.mp4")
         opts = creator.source_options(r["url"]) if creator else {}
-        qa.thumbnail(Path(r["path"]), r["hook"], folder / "thumbnail.jpg", frame=res["_thumb"],
+        qa.thumbnail(Path(r["path"]), r["hook"], root / f"{name}.jpg", frame=res["_thumb"],
                      accent=cfg["brand"]["accent"],
                      clean={"src": src, "t": res["thumb_t"], "layout": creator.layout if creator else "auto",
                             "facecam": creator.facecam if creator else None, **opts} if src.exists() else None)
@@ -124,28 +124,30 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
         warn = ""
         if creator and "PENDING" in (creator.campaign_rules or ""):
             warn = ("!! CAMPAIGN RULES NOT CONFIRMED: open this campaign's reference files on Content Rewards and check "
-                    "the required mention/hashtag before posting. Add anything missing to the description.\n\n")
-        (folder / "info.txt").write_text(
-            warn
-            + f"TITLE:\n{r['title']}\n\n"
-            f"DESCRIPTION (paste as is):\n{desc}\n\n"
-            f"HASHTAGS:\n{' '.join(tags)}\n\n"
-            f"ON-SCREEN HOOK: {r['hook']}\n"
-            f"LENGTH: {res['duration']}s   SCORE: {r['score']}   QA: {res['qa']}"
-            + (f"   NOTES: {'; '.join(res['reasons'])}" if res["reasons"] else "") + "\n"
-            f"CREATOR / CAMPAIGN: {r['creator']} — {submit}\n"
-            f"SOURCE: {r['url']} @ {r['start']:.0f}s-{r['end']:.0f}s\n\n"
-            "UPLOAD:\n"
-            "- YouTube Studio > Create > Upload > vid.mp4. Title + description from above. Not for kids. Public.\n"
-            "- Copy the Short's URL and submit it on the campaign page (link above) straight away.\n"
-            "- Paste the URL into the review page's Approved tab so views get tracked.\n")
+                    "the required mention/hashtag before posting. Add anything missing to the description.\n")
+        # Hashtags go into the description too: YouTube reads them from there, one paste does it all.
+        extra = " ".join(t for t in tags if t not in desc)
+        full_desc = (desc + ("\n\n" + extra if extra else "")).strip()
         db.execute("UPDATE clips SET status='approved', reason='auto-selected for morning pack', decided_at=CURRENT_TIMESTAMP WHERE id=?", (r["id"],))
-        summary.append(f"{name}: {r['title']}  [score {r['score']}, QA {res['qa']}, {res['duration']}s]  — {r['why']}")
+        summary += [
+            f"########## {name}  ({name}.mp4, thumbnail {name}.jpg)  [score {r['score']}, QA {res['qa']}, {res['duration']}s]",
+            warn.rstrip("\n") if warn else None,
+            f"TITLE:\n{r['title']}",
+            f"DESCRIPTION (paste as is, hashtags included):\n{full_desc}",
+            f"HASHTAGS: {' '.join(tags)}",
+            f"HOOK ON SCREEN: {r['hook']}",
+            f"WHY: {r['why']}",
+            f"SUBMIT: {submit}",
+            f"SOURCE: {r['url']} @ {r['start']:.0f}s-{r['end']:.0f}s"
+            + (f"\nNOTES: {'; '.join(res['reasons'])}" if res["reasons"] else ""),
+            "",
+        ]
+        summary = [x for x in summary if x is not None]
     db.commit()
     left = [t for t in ranked if t[1]["qa"] >= min_qa and t[0]["id"] not in {c[0]["id"] for c in chosen}]
     summary += ["", f"{len(chosen)} selected, {len(left)} good clips held for tomorrow, "
                 f"{sum(1 for _, res in assessed if res['qa'] < min_qa)} rejected by QA."]
-    sp = root / "SUMMARY.txt"
+    sp = root / "UPLOAD.txt"
     prev = sp.read_text() if (existing and sp.exists()) else ""
     sp.write_text(prev + "\n".join(summary) + "\n")
     return root

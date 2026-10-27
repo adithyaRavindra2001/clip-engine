@@ -3,7 +3,7 @@
   clip daily                     discover fresh VODs from allowed creators, clip them, write prospects report
   clip run URL --creator NAME    clip one VOD / podcast (URL or local file)
   clip discover                  prospects report only
-  clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN/ (vid.mp4, info.txt, thumbnail.jpg)
+  clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN.mp4 + .jpg, one UPLOAD.txt
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
   clip stats                     quick performance summary
@@ -83,7 +83,7 @@ def cmd_morning(cfg, db, args):
     m = cfg["morning"]
     root = morning.build(cfg, db, args.date, limit=args.limit or int(m["per_campaign"]),
                          min_qa=args.min_qa or int(m["min_qa"]), only=args.creator)
-    print((root / "SUMMARY.txt").read_text())
+    print((root / "UPLOAD.txt").read_text())
     print(f"Pack: {root}")
 
 
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("discover", help="prospects report").set_defaults(fn=cmd_discover)
 
-    m = sub.add_parser("morning", help="auto-select today's best clips into todays-yt/<date>/<campaign>-NN/ with info.txt + thumbnail")
+    m = sub.add_parser("morning", help="auto-select today's best clips into todays-yt/<date>/ as <campaign>-NN.mp4 + .jpg with one UPLOAD.txt")
     m.add_argument("--date", default=None)
     m.add_argument("--limit", type=int, default=None, help="clips PER CAMPAIGN (default: morning.per_campaign)")
     m.add_argument("--min-qa", type=int, default=None)
