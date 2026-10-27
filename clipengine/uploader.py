@@ -126,21 +126,76 @@ def _type_textbox(page, container_sel: str, text: str) -> None:
     _sleep(0.4, 0.9)
 
 
-def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str) -> str:
-    """Upload one file, fill details, publish as Public (not for kids). Returns the video id."""
-    page.goto(f"{STUDIO}/channel/UC/videos/upload?d=ud", wait_until="domcontentloaded")
-    page.wait_for_selector("ytcp-uploads-dialog, input[type=file]", timeout=90_000)
-    page.locator("input[type=file]").first.set_input_files(str(mp4))
-    # Details step
-    page.wait_for_selector("#title-textarea #textbox", timeout=120_000)
+def _channel(page) -> str:
+    page.goto(STUDIO, wait_until="domcontentloaded")
+    page.wait_for_url(re.compile(r"studio\.youtube\.com/channel/UC[\w-]+"), timeout=60_000)
+    return re.search(r"/channel/(UC[\w-]+)", page.url).group(1)
+
+
+def _open_draft(page, channel: str, name: str, title: str) -> bool:
+    """If Studio already holds a draft for this clip (an interrupted run, or a file you dropped in by hand
+    whose title is the file name like 'fomo 11'), open its editor instead of uploading again."""
+    wanted = {title.lower().strip(), name.lower(), name.lower().replace("-", " "), name.lower().replace("-", "")}
+    for tab in ("short", "upload"):
+        page.goto(f"{STUDIO}/channel/{channel}/videos/{tab}", wait_until="domcontentloaded")
+        try:
+            page.wait_for_selector("ytcp-video-row", timeout=20_000)
+        except Exception:
+            continue
+        for row in page.locator("ytcp-video-row").all():
+            try:
+                t = row.locator("#video-title").first.inner_text(timeout=3_000).strip().lower()
+            except Exception:
+                continue
+            if t in wanted and "draft" in row.inner_text().lower():
+                btn = row.get_by_role("button", name=re.compile(r"edit draft", re.I)).first
+                if not btn.count():
+                    btn = row.get_by_text(re.compile(r"edit draft", re.I)).first
+                btn.click()
+                page.wait_for_selector("#title-textarea #textbox", timeout=60_000)
+                print(f"    resuming Studio draft {t!r}", flush=True)
+                return True
+    return False
+
+
+def _limit_hit(page) -> bool:
+    try:
+        return page.get_by_text(re.compile(r"daily upload limit reached", re.I)).first.is_visible(timeout=1_500)
+    except Exception:
+        return False
+
+
+def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, name: str = "") -> str:
+    """Upload one file (or resume its draft), fill details, publish as Public (not for kids). Returns the video id."""
+    channel = _channel(page)
+    print(f"    studio channel {channel}", flush=True)
+    if not (name and _open_draft(page, channel, name, title)):
+        page.goto(f"{STUDIO}/channel/{channel}/videos/upload?d=ud", wait_until="domcontentloaded")
+        try:
+            page.wait_for_selector("input[type=file]", state="attached", timeout=30_000)
+        except Exception:
+            page.locator("#create-icon").first.click()
+            page.get_by_text(re.compile(r"upload videos", re.I)).first.click()
+            page.wait_for_selector("input[type=file]", state="attached", timeout=30_000)
+        page.locator("input[type=file]").first.set_input_files(str(mp4))
+        page.wait_for_selector("#title-textarea #textbox", timeout=120_000)
     _sleep(1.0, 2.0)
+    if _limit_hit(page):
+        raise RuntimeError("YouTube daily upload limit reached. One-time fix: myaccount.google.com/video-verification "
+                           "(scan the QR in Studio with your phone), or wait 24 h. The clip stays as a Studio draft "
+                           "and the next run resumes it.")
     _type_textbox(page, "#title-textarea", title)
     _type_textbox(page, "#description-textarea", description)
     page.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]').first.click()
     _sleep(0.5, 1.2)
-    # The video link appears in the dialog as soon as the id is assigned.
     link = page.locator("ytcp-video-info a, .video-url-fadeable a").first
-    link.wait_for(timeout=120_000)
+    try:
+        link.wait_for(timeout=120_000)
+    except Exception:
+        if _limit_hit(page):
+            raise RuntimeError("YouTube daily upload limit reached (see myaccount.google.com/video-verification); "
+                               "clip left as a Studio draft")
+        raise
     href = link.get_attribute("href") or ""
     m = re.search(r"(?:youtu\.be/|/shorts/|v=)([\w-]{11})", href)
     if not m:
@@ -151,11 +206,9 @@ def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str) -
         _sleep(0.8, 1.6)
     page.locator('tp-yt-paper-radio-button[name="PUBLIC"]').first.click()
     _sleep(0.5, 1.0)
-    # Let the bytes finish before closing the dialog, so "Public" applies the moment processing ends.
     _wait_upload_done(page)
     page.locator("#done-button").first.click()
     _sleep(1.5, 3.0)
-    # Studio sometimes shows a "Video published" / close dialog
     for sel in ("ytcp-uploads-still-processing-dialog #close-button", "#close-button"):
         try:
             btn = page.locator(sel).first
@@ -329,20 +382,20 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
             try:
                 url = e["posted"]
                 if not url:
-                    print(f"  {name}: uploading {e['title']!r}")
-                    vid = youtube_upload(page, cfg, mp4, e["title"], e["description"])
+                    print(f"  {name}: uploading {e['title']!r}", flush=True)
+                    vid = youtube_upload(page, cfg, mp4, e["title"], e["description"], name=name)
                     url = YT_SHORT.format(id=vid)
                     _note(upload_txt, name, f"POSTED: {url}")
                     if e["id"]:
                         db.execute("UPDATE clips SET status='posted', posted_url=?, decided_at=CURRENT_TIMESTAMP WHERE id=?", (url, e["id"]))
                         db.commit()
-                    print(f"    uploaded -> {url}; waiting until it is live")
+                    print(f"    uploaded -> {url}; waiting until it is live", flush=True)
                     wait_until_live(page, vid)
                 if e["campaign_url"]:
-                    print(f"    submitting on {e['campaign_url']}")
+                    print(f"    submitting on {e['campaign_url']}", flush=True)
                     content_rewards_submit(page, cfg, e["campaign_url"], url)
                     _note(upload_txt, name, f"SUBMITTED: {datetime.now():%Y-%m-%d %H:%M}")
-                    print("    submitted")
+                    print("    submitted", flush=True)
                 else:
                     _note(upload_txt, name, "SUBMITTED: no-campaign-url")
                 tally_add(cfg, day, name, name.rsplit("-", 1)[0], e["title"], url,
@@ -353,7 +406,7 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
                 done += 1
             except Exception as ex:
                 shot = _debug(page, name, cfg)
-                print(f"  [stop] {name}: {ex}\n         screenshot: {shot}")
+                print(f"  [stop] {name}: {ex}\n         screenshot: {shot}", flush=True)
                 _notify("clip upload stopped", f"{name}: {str(ex)[:80]}")
                 break
             if done < min(limit, len(todo)):
