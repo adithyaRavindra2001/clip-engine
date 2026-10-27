@@ -194,8 +194,73 @@ def _face_x_frac(L: dict, crop_left: float = 0.0, crop_right: float = 0.0) -> fl
     return min(0.8, max(0.2, (L["cx"] - x) / cw))
 
 
+def pause_cuts(words: list[dict], offset: float, duration: float, min_gap: float, pad: float) -> list[tuple[float, float]]:
+    """Dead air inside the clip, as (start, end) ranges relative to the clip: every gap between two spoken words
+    longer than `min_gap`, shrunk by `pad` on each side so the speech never gets clipped. Also the silent tail."""
+    rel = sorted(((w["start"] - offset, w["end"] - offset) for w in words), key=lambda t: t[0])
+    cuts = []
+    for (s0, e0), (s1, e1) in zip(rel, rel[1:]):
+        if s1 - e0 > min_gap:
+            a, b = e0 + pad, s1 - pad
+            if b - a > 0.08:
+                cuts.append((max(a, 0.0), min(b, duration)))
+    if rel and duration - rel[-1][1] > 0.6:        # keep a short breath after the last word, not a dead tail
+        cuts.append((rel[-1][1] + 0.4, duration))
+    return [(a, b) for a, b in cuts if b > a]
+
+
+def _remap(t: float, cuts: list[tuple[float, float]]) -> float:
+    """Clip time -> time in the compressed clip."""
+    removed = 0.0
+    for a, b in cuts:
+        if t >= b:
+            removed += b - a
+        elif t > a:
+            removed += t - a
+    return t - removed
+
+
+def compress_pauses(src: Path, duration: float, cuts: list[tuple[float, float]]) -> tuple[Path, float]:
+    """Writes src_cut.mp4 with the `cuts` removed (15 ms audio fades at every join so there are no clicks).
+    Returns (new source, new duration)."""
+    keep, t = [], 0.0
+    for a, b in sorted(cuts):
+        if a - t > 0.05:
+            keep.append((t, a))
+        t = max(t, b)
+    if duration - t > 0.05:
+        keep.append((t, duration))
+    parts, labels = [], ""
+    for i, (a, b) in enumerate(keep):
+        ln = b - a
+        parts.append(f"[0:v]trim={a:.3f}:{b:.3f},setpts=PTS-STARTPTS[v{i}];"
+                     f"[0:a]atrim={a:.3f}:{b:.3f},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,"
+                     f"afade=t=out:st={max(ln - 0.015, 0):.3f}:d=0.015[a{i}]")
+        labels += f"[v{i}][a{i}]"
+    graph = ";".join(parts) + f";{labels}concat=n={len(keep)}:v=1:a=1[v][a]"
+    out = src.with_name("src_cut.mp4")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src.name, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
+                    out.name], cwd=src.parent, check=True)
+    return out, sum(b - a for a, b in keep)
+
+
+def interrupt_windows(words: list[dict], offset: float, duration: float, every: float,
+                      avoid: list[float]) -> list[tuple[float, float]]:
+    """Pattern interrupts: hard zoom toggles roughly every `every` seconds, placed on caption-chunk boundaries so
+    the cut lands with a word, never mid-word, and kept clear of the beat punch-ins. Returns the zoomed-in windows."""
+    rel = [{**w, "start": w["start"] - offset, "end": w["end"] - offset} for w in words]
+    starts = [c[0]["start"] for c in chunk_words(rel)]
+    toggles, last = [], 0.0
+    for t in starts:
+        if t - last >= every and t < duration - 1.0 and all(abs(t - b) > 1.1 for b in avoid):
+            toggles.append(t); last = t
+    return [(toggles[i], toggles[i + 1] if i + 1 < len(toggles) else duration) for i in range(0, len(toggles), 2)]
+
+
 def punch_in_filter(beats: list[float], amount: float = 0.12, attack: float = 0.10, hold: float = 0.55,
-                    release: float = 0.30, focus_x: float = 0.5, focus_y: float = 0.42) -> str:
+                    release: float = 0.30, focus_x: float = 0.5, focus_y: float = 0.42,
+                    cuts: list[tuple[float, float]] | None = None) -> str:
     """A 'punch-in': the frame snaps to (1+amount)x over `attack` s on each beat, holds, then eases back.
     This is the visual cue an impact sound is tied to, so the sound never feels random. Zoom is centred a
     little above the middle of the frame, where the speaker's face sits in a 9:16 crop. Rewrites [base]."""
@@ -205,7 +270,10 @@ def punch_in_filter(beats: list[float], amount: float = 0.12, attack: float = 0.
         pulses.append(f"if(between(t,{t0:.3f},{t1:.3f}),(t-{t0:.3f})/{attack:.3f},"
                       f"if(between(t,{t1:.3f},{t2:.3f}),1,"
                       f"if(between(t,{t2:.3f},{t3:.3f}),1-(t-{t2:.3f})/{release:.3f},0)))")
-    z = f"(1+{amount:.3f}*min(1,{'+'.join(pulses)}))"
+    terms = list(pulses)
+    for a, b in (cuts or []):   # pattern interrupts: an instant 75%-strength zoom that holds for the window
+        terms.append(f"0.75*between(t,{a:.3f},{b:.3f})")
+    z = f"(1+{amount:.3f}*min(1,{'+'.join(terms) or '0'}))"
     return (f"[base]scale=w='trunc(iw*{z}/2)*2':h='trunc(ih*{z}/2)*2':eval=frame:{SCALE},"
             f"crop={OUT_W}:{OUT_H}:'(iw-{OUT_W})*{focus_x:.2f}':'(ih-{OUT_H})*{focus_y:.2f}'[base]")
 
@@ -230,6 +298,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 DEFAULT_BRAND = {
     "accent": "#FFD400",     # caption highlight + progress bar colour
     "hook_animation": True,  # hook text pops in instead of sitting static
+    "cut_pauses": 0.0,       # seconds: remove dead air longer than this between words (0 = off)
+    "cut_pad": 0.12,         # breath left on each side of a removed pause
+    "interrupt_every": 0.0,  # seconds: hard zoom toggle on a caption boundary about this often (0 = off)
     "progress_bar": True,    # thin bar along the bottom edge that fills over the clip
     "music": True,           # mix a quiet bed from music/<mood>/ under the speech (skipped if no files)
     "music_db": -22,         # music level relative to full scale; speech ducks it further
@@ -367,15 +438,28 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     duration = float(subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(src)],
         capture_output=True, text=True, check=True).stdout.strip())
+    beats = list(beats or [])
+    # Pacing: strip dead air between words so the clip is dense (captions + beats are remapped to the new timeline).
+    if float(b.get("cut_pauses") or 0) > 0 and words and _has_audio(src):
+        cuts = pause_cuts(words, offset, duration, float(b["cut_pauses"]), float(b.get("cut_pad", 0.12)))
+        if sum(e - s for s, e in cuts) >= 0.3:
+            src, new_duration = compress_pauses(src, duration, cuts)
+            words = [{**w, "start": offset + _remap(w["start"] - offset, cuts),
+                      "end": offset + _remap(w["end"] - offset, cuts)} for w in words]
+            beats = [_remap(t, cuts) for t in beats]
+            print(f"    pauses cut: {duration:.1f}s -> {new_duration:.1f}s")
+            duration = new_duration
     ass = out.with_suffix(".ass")
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
                              accent=b["accent"], hook_animation=b["hook_animation"]))
 
     graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src)
-    punches = sorted(t for t in (beats or []) if 0.8 < t < duration - 0.4)[:2] if b.get("punch_in") else []
-    if punches:
+    punches = sorted(t for t in beats if 0.8 < t < duration - 0.4)[:2] if b.get("punch_in") else []
+    windows = (interrupt_windows(words, offset, duration, float(b["interrupt_every"]), punches)
+               if b.get("punch_in") and float(b.get("interrupt_every") or 0) > 0 else [])
+    if punches or windows:
         graph += ";" + punch_in_filter(punches, float(b.get("punch_in_zoom", 0.12)),
-                                       focus_x=_face_x_frac(L, crop_left, crop_right))
+                                       focus_x=_face_x_frac(L, crop_left, crop_right), cuts=windows)
     graph += f";[base]subtitles={ass.name}[s]"
     if b["progress_bar"]:
         graph += (f";[s]drawbox=x=0:y=ih-14:w='iw*min(t/{duration:.3f},1)':h=14:"
@@ -427,9 +511,9 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
                 stems.append("[sfx]")
                 n_in += n_fx
         if stems:
-            fade_at = max(duration - 1.2, 0)
+            # No fade-out: a Short that loops straight back into its hook counts as a replay.
             graph += (f";{speech}{''.join(stems)}amix=inputs={1 + len(stems)}:duration=first:normalize=0,"
-                      f"atrim=0:{duration:.3f},afade=t=out:st={fade_at:.2f}:d=1.2,alimiter=limit=0.97[a]")
+                      f"atrim=0:{duration:.3f},alimiter=limit=0.97[a]")
         else:
             graph += f";{speech}anull[a]"
         amap = ["-map", "[a]"]

@@ -30,6 +30,12 @@ ideally on a line that makes the first second make sense again, so the clip loop
 - Moments must not overlap.
 - Follow the campaign rules exactly; drop any moment that breaks them. If the rules require a specific \
 audience geography (e.g. 40%+ US/UK/CA/AU), avoid moments centred on other countries or audiences.
+- OPENING: the first 10 spoken words must contain zero setup, context or pleasantries. Start on an \
+unresolved conflict, a counter-intuitive claim, a direct accusation ("you're doing X wrong"), a number, or \
+the reaction itself. If the best line comes after a wind-up, start at the line, not the wind-up.
+- ENDING: never end on a sign-off, a thank-you, a fade or a trailing "so yeah". End on the payoff, an open \
+loop (an unanswered question, a cliffhanger) or a line that makes the first second make sense again, so the \
+clip loops back into its hook without a break.
 - The hook text is on-screen text in the clip's first seconds: max 8 words, punchy, adds \
 context or tension — this is our original contribution, so make it genuinely useful, not clickbait \
 that the clip doesn't deliver.
