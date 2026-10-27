@@ -28,6 +28,8 @@ Output ONLY a JSON object of the form {\"moments\": [...]} matching the ANSWER F
 No prose, no markdown fences. Every caption must satisfy the campaign rules in the request (required tags/mentions).
 Titles: one punchy Gen Z line a viewer would tap, like a friend texting. No colons, no quotation marks, no Name: quote
 format, no hashtags, under 70 characters. Example: masvidal just confirmed his comeback and it's a blockbuster
+Emoji: streamer / reaction clips get 1-2 fitting emojis in the title and caption and one at the end of the hook
+(😭 💀 🔥 😂 👀 🤯); podcasts and informative clips get none.
 Set \"mood\" on each moment to one of: energetic, tense, funny, emotional, neutral.
 Set \"beats\" on each moment: 0-2 absolute transcript timestamps (seconds) where the payoff word lands (punchline, reveal,
 the number) — the picture punches in there, so use the exact word timestamp, at least 1s after start and before the last second.

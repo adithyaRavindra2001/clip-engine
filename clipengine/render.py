@@ -266,6 +266,34 @@ def _clean(text: str) -> str:
     return re.sub(r"[{}\\]", "", text).strip()
 
 
+# Emoji (and the joiners/modifiers that build them). libass + Arial draw these as boxes, so the hook text is
+# rendered without them and the emoji are overlaid as a colour PNG (Apple Color Emoji via Pillow) just below it.
+EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F900-\U0001F9FF\u2B50\u2B55\u203C\u2049\u2122"
+                   "\u2139\u3030\u303D\u3297\u3299\U0001F1E6-\U0001F1FF\u200D\uFE0F\u20E3\U0001F3FB-\U0001F3FF]+")
+
+
+def split_emoji(text: str) -> tuple[str, str]:
+    """('hook text without emoji', 'the emoji, in order')."""
+    emo = "".join(EMOJI.findall(text))
+    plain = re.sub(r"\s+", " ", EMOJI.sub(" ", text)).strip()
+    return plain, emo
+
+
+def emoji_png(emoji: str, out: Path, size: int = 160) -> Path | None:
+    """Render colour emoji to a transparent PNG (Apple Color Emoji has a 160 px strike). None if unavailable."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        font = ImageFont.truetype("/System/Library/Fonts/Apple Color Emoji.ttc", size)
+        probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+        x0, y0, x1, y1 = probe.textbbox((0, 0), emoji, font=font, embedded_color=True)
+        im = Image.new("RGBA", (x1 - x0 + 8, y1 - y0 + 8), (0, 0, 0, 0))
+        ImageDraw.Draw(im).text((4 - x0, 4 - y0), emoji, font=font, embedded_color=True)
+        im.save(out)
+        return out
+    except Exception:
+        return None
+
+
 def chunk_words(words: list[dict], max_words: int = 3, max_gap: float = 0.6) -> list[list[dict]]:
     chunks: list[list[dict]] = []
     for w in words:
@@ -289,7 +317,8 @@ def build_ass(words: list[dict], offset: float, duration: float, hook: str, spli
         # In split layout, sit just under the facecam so the hook doesn't cover the face.
         margin = TOP_H + 30 if split else 0
         pop = HOOK_POP if hook_animation else ""
-        lines.append(f"Dialogue: 1,{_t(0)},{_t(min(4.0, duration))},Hook,,0,0,{margin},,{pop}{_clean(hook).upper()}\n")
+        plain, _ = split_emoji(_clean(hook))
+        lines.append(f"Dialogue: 1,{_t(0)},{_t(min(4.0, duration))},Hook,,0,0,{margin},,{pop}{plain.upper()}\n")
     rel = [{**w, "start": w["start"] - offset, "end": w["end"] - offset} for w in words]
     chunks = chunk_words(rel)
     for ci, chunk in enumerate(chunks):
@@ -357,14 +386,26 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
     inputs = ["-i", src.name]
     amap = ["-map", "0:a?"]
     has_audio = _has_audio(src)
-    wm_index = None
+    n_in = 1   # next ffmpeg input index
+    overlays = 0
     if watermark and Path(watermark).exists():
-        wm_index = 1
         inputs += ["-i", str(Path(watermark).resolve())]
-        graph = graph.replace("[v]", "[v0]") + f";[v0][{wm_index}:v]overlay=0:0:format=auto[v]"
+        graph = graph.replace("[v]", f"[v{overlays}]") + f";[v{overlays}][{n_in}:v]overlay=0:0:format=auto[v]"
+        n_in += 1; overlays += 1
+    # Colour emoji from the hook, centred under the hook text for the 4 s the hook is on screen.
+    _, emo = split_emoji(_clean(hook)) if hook else ("", "")
+    emo_png = emoji_png(emo, out.with_suffix(".emoji.png")) if emo else None
+    if emo_png:
+        plain_len = len(split_emoji(_clean(hook))[0])
+        hook_lines = max(1, -(-plain_len // 20))                      # ~20 upper-case chars per line at 70 px
+        y = (TOP_H + 30 if L["kind"] == "split" else 170) + 92 * hook_lines + 6
+        inputs += ["-i", str(emo_png.resolve())]
+        graph = (graph.replace("[v]", f"[v{overlays}]")
+                 + f";[{n_in}:v]scale=-1:110[emo];[v{overlays}][emo]overlay=(W-w)/2:{y}:format=auto:"
+                   f"enable='between(t,0,{min(4.0, duration):.2f})'[v]")
+        n_in += 1; overlays += 1
     # Speech is normalised to -14 LUFS (YouTube/Instagram target) so quiet stage mics don't sink the clip.
     LOUD = "loudnorm=I=-14:TP=-1.5:LRA=11"
-    n_in = 2 if wm_index else 1
     stems: list[str] = []   # audio labels to sum with the speech
     if has_audio:
         if music and b["music"]:

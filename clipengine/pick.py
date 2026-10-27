@@ -46,7 +46,10 @@ podcasts, interviews and informative content use "none" for every beat. Options:
   Use at most one "fahh" per clip. If unsure, "none" beats a wrong sound.
 - TITLE style: one punchy line a Gen Z viewer would tap, written like a friend texting, not a news \
 headline. No colons, no quotation marks, no "Name: quote" or "quote - Name" formats, no hashtags. \
-Lowercase is fine, slang is fine, a single emoji is fine. Under 70 characters. \
+Lowercase is fine, slang is fine. Under 70 characters. \
+- EMOJI: for STREAMER / reaction content put 1-2 emojis that fit the moment in the title, 1-2 in the \
+caption and ONE at the end of the hook, the way a clip page would (😭 💀 🔥 😂 👀 🤯 😳 🗣️ 🧢 💯 🤡). \
+Only where they add energy, never decorative. Podcasts and informative content: no emoji at all. \
 Bad: Jorge Masvidal confirms his comeback: "blockbuster fight" next year \
 Good: masvidal just confirmed his comeback and it's a blockbuster
 - Every clip must be sharp and watchable at full screen: skip moments where the camera is far \
@@ -62,7 +65,7 @@ class Moment(BaseModel):
     end: float = Field(description="End time in seconds, from the transcript")
     score: int = Field(description="Predicted performance 1-100")
     title: str = Field(description="One punchy Gen Z line, no colons or quotation marks, under 70 characters")
-    hook: str = Field(description="On-screen hook text, max 8 words")
+    hook: str = Field(description="On-screen hook text, max 8 words (+ one emoji at the end for streamer clips)")
     caption: str = Field(description="Post description: one line + 3-5 relevant hashtags")
     why: str = Field(description="One sentence: why this will perform")
     mood: str = Field(default="neutral",
