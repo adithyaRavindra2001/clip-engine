@@ -6,6 +6,7 @@
   clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN.mp4 + .jpg, one UPLOAD.txt
   clip upload                    publish today's pack: YouTube Studio upload + Content Rewards submission
   clip quota                     today's pack vs the 5-per-campaign target (--short: names still below it)
+  clip notify TITLE BODY         push to your phone (Telegram/ntfy) + Mac notification; --setup-telegram once
   clip health                    morning audit: packed/published/submitted per campaign, launchd jobs, log errors
   clip login                     open the automation Chrome profile to sign in once
   clip tally                     everything published so far (tally/uploads.csv)
@@ -23,7 +24,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import campaigns, discover, learn, morning, pipeline, quota, review, store, uploader
+from . import campaigns, discover, learn, morning, notify, pipeline, quota, review, store, uploader
 from .config import Config
 
 
@@ -124,6 +125,13 @@ def cmd_quota(cfg, db, args):
     print("quota met" if not short else f"short: {', '.join(f'{k} {v}' for k, v in short.items())}")
 
 
+def cmd_notify(cfg, db, args):
+    if args.setup_telegram:
+        print(notify.telegram_setup(cfg))
+        return
+    print("sent via: " + ", ".join(notify.send(cfg, args.title, args.body or "")))
+
+
 def cmd_health(cfg, db, args):
     ok, text = quota.health(cfg, args.date, notify=not args.no_notify)
     print(text)
@@ -215,6 +223,11 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--date", default=None)
     q.add_argument("--short", action="store_true", help="print only the names of campaigns still below target, one per line")
     q.set_defaults(fn=cmd_quota)
+
+    nt = sub.add_parser("notify", help="push a message to your phone (Telegram/ntfy) + Mac; --setup-telegram once")
+    nt.add_argument("title", nargs="?", default="clip-engine"); nt.add_argument("body", nargs="?", default="")
+    nt.add_argument("--setup-telegram", action="store_true")
+    nt.set_defaults(fn=cmd_notify)
 
     h = sub.add_parser("health", help="morning audit of yesterday's pack: packed/published/submitted per campaign + launchd jobs")
     h.add_argument("--date", default=None, help="pack date to audit (default: yesterday)")

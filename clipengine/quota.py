@@ -57,6 +57,40 @@ def _jobs_loaded() -> dict[str, str]:
     return jobs
 
 
+def views_table(cfg: Config, day: str | None = None) -> str:
+    """Live YouTube views/likes for the clips published on `day` (all days if None) via the Data API."""
+    import json
+    import urllib.parse
+    import urllib.request
+    from . import uploader
+    key = uploader._api_key(cfg)
+    rows = [r for r in uploader.tally_rows(cfg) if not day or r["date"] == day]
+    if not key or not rows:
+        return "(no API key or no clips)" if not rows else "(youtube.api_key missing: no view counts)"
+    ids = {}
+    for r in rows:
+        m = re.search(r"(?:shorts/|v=)([\w-]{11})", r["youtube_url"])
+        if m:
+            ids[r["name"]] = (m.group(1), r["title"])
+    stats = {}
+    vids = [v for v, _ in ids.values()]
+    for i in range(0, len(vids), 50):
+        q = urllib.parse.urlencode({"part": "statistics", "id": ",".join(vids[i:i + 50]), "key": key})
+        try:
+            d = json.load(urllib.request.urlopen("https://www.googleapis.com/youtube/v3/videos?" + q, timeout=30))
+        except Exception as e:
+            return f"(views lookup failed: {e})"
+        for it in d.get("items", []):
+            stats[it["id"]] = it["statistics"]
+    lines, total = [], 0
+    for name, (vid, title) in ids.items():
+        s = stats.get(vid, {})
+        v = int(s.get("viewCount", 0)); total += v
+        lines.append(f"{name:<14}{v:>7}{int(s.get('likeCount', 0)):>5}  {title[:34]}")
+    lines.sort(key=lambda l: -int(l.split()[1]))
+    return f"{'clip':<14}{'views':>7}{'likes':>5}  title\n" + "\n".join(lines) + f"\n{'total':<14}{total:>7}"
+
+
 def health(cfg: Config, day: str | None = None, notify: bool = True) -> tuple[bool, str]:
     """Audit the pack cut on `day` (default: yesterday, since the cut is at 17:00 and uploads run overnight).
     OK means every campaign has exactly per_campaign clips, all published and all submitted."""
@@ -103,11 +137,14 @@ def health(cfg: Config, day: str | None = None, notify: bool = True) -> tuple[bo
     ok = not problems
     lines.append("")
     lines.append("ALL GOOD" if ok else "PROBLEMS: " + "; ".join(problems))
+    lines += ["", f"Views for the {day} clips (live):", views_table(cfg, day)]
+    all_rows = uploader.tally_rows(cfg)
+    lines.append(f"Published so far: {len(all_rows)} clips")
     text = "\n".join(lines)
     out = cfg.data_dir / "reports" / f"health-{day}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text + "\n")
     if notify:
-        uploader._notify("clip-engine: " + ("all good" if ok else "ATTENTION"),
-                         f"{day}: " + ("every campaign at quota, all submitted" if ok else "; ".join(problems)[:200]))
+        from . import notify as push
+        push.send(cfg, "clip-engine " + ("✅ all good" if ok else "⚠️ ATTENTION") + f" ({day})", text)
     return ok, text

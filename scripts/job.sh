@@ -33,6 +33,7 @@ fi
 cd "$ROOT" || exit 1
 source .venv/bin/activate
 export PYTHONUNBUFFERED=1
+notify() { clip notify "$1" "$2" >/dev/null 2>&1 || /usr/bin/osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1 || true }
 export PATH="$HOME/.nvm/versions/node/v22.21.1/bin:/opt/homebrew/opt/ffmpeg-full/bin:/opt/homebrew/bin:$PATH"
 rc=0
 case "$JOB" in

@@ -436,6 +436,26 @@ def latest_pack(cfg: Config) -> str | None:
     return None
 
 
+def _duplicate_of(cfg: Config, db, e: dict) -> str | None:
+    """Why this pack entry must NOT be uploaded again, or None. Checks the DB (clip already posted, or another
+    posted clip overlaps the same seconds of the same video) and the tally (same title already published)."""
+    if e.get("id"):
+        row = db.execute("SELECT status, posted_url, video_id, start, end FROM clips WHERE id = ?", (e["id"],)).fetchone()
+        if row:
+            if row["status"] == "posted" and row["posted_url"]:
+                return f"clip {e['id']} already posted at {row['posted_url']}"
+            twin = db.execute(
+                "SELECT id, posted_url FROM clips WHERE video_id = ? AND id != ? AND status = 'posted' "
+                "AND start < ? AND end > ?", (row["video_id"], e["id"], row["end"] - 2, row["start"] + 2)).fetchone()
+            if twin:
+                return f"same moment already posted as clip {twin['id']} ({twin['posted_url']})"
+    title = (e.get("title") or "").strip().lower()
+    for r in tally_rows(cfg):
+        if title and r["title"].strip().lower() == title:
+            return f"same title already published as {r['name']} ({r['youtube_url']})"
+    return None
+
+
 def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int = 240,
         dry_run: bool = False, only: str | None = None) -> int:
     day = day or latest_pack(cfg)
@@ -464,6 +484,16 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
             name, mp4 = e["name"], root / f"{e['name']}.mp4"
             try:
                 url = e["posted"]
+                dup = None if url else _duplicate_of(cfg, db, e)
+                if dup:
+                    # Never upload the same thing twice: park it in held/ and mark it so no run retries it.
+                    print(f"  [dup] {name} skipped: {dup}", flush=True)
+                    _note(upload_txt, name, f"SUBMITTED: skipped-duplicate ({dup})")
+                    held = root / "held"; held.mkdir(exist_ok=True)
+                    for ext in (".mp4", ".jpg"):
+                        if (root / f"{name}{ext}").exists():
+                            shutil.move(str(root / f"{name}{ext}"), held / f"{name}{ext}")
+                    continue
                 if not url:
                     print(f"  {name}: uploading {e['title']!r}", flush=True)
                     vid = youtube_upload(page, cfg, mp4, e["title"], e["description"], name=name)
