@@ -205,7 +205,7 @@ DEFAULT_BRAND = {
     "progress_bar": True,    # thin bar along the bottom edge that fills over the clip
     "music": True,           # mix a quiet bed from music/<mood>/ under the speech (skipped if no files)
     "music_db": -22,         # music level relative to full scale; speech ducks it further
-    "sfx": True,             # whoosh on the hook, impact on the beats Claude marks (sfx/ folder, synthesised if empty)
+    "sfx": False,            # whoosh on the hook, impact on the beats Claude marks (sfx/ folder, synthesised if empty)
     "sfx_db": -9,            # effects level (sounds are peak-normalised to -1 dBFS)
 }
 AUDIO_EXT = (".mp3", ".m4a", ".wav", ".aac", ".ogg", ".flac")
