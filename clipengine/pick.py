@@ -200,22 +200,54 @@ def clean_title(t: str) -> str:
     return t[:70].rstrip()
 
 
+def sentence_bounds(segments: list[dict], gap: float = 0.6) -> tuple[list[float], list[float]]:
+    """(sentence start times, sentence end times) from the transcript: a word starts a sentence when it opens a
+    segment, follows terminal punctuation, or follows a pause of `gap` seconds or more."""
+    words = [w for s in segments for w in s["words"]]
+    seg_first = {s["words"][0]["start"] for s in segments if s.get("words")}
+    starts, ends = [], []
+    for i, w in enumerate(words):
+        prev = words[i - 1] if i else None
+        opens = (w["start"] in seg_first or prev is None
+                 or prev["word"].strip().endswith((".", "?", "!", "…"))
+                 or w["start"] - prev["end"] >= gap)
+        if opens:
+            starts.append(w["start"])
+            if prev is not None:
+                ends.append(prev["end"])
+    if words:
+        ends.append(words[-1]["end"])
+    return starts, ends
+
+
 def snap(moments: list[Moment], segments: list[dict], min_s: float, max_s: float,
          used: list[tuple[float, float]] | None = None) -> list[Moment]:
     """Align to word boundaries, enforce length, drop overlaps (with each other and with already-cut moments)."""
     words = [w for s in segments for w in s["words"]]
+    # Sentence boundaries: a clip must start where a thought starts and end where one ends, never mid-sentence.
+    sent_starts, sent_ends = sentence_bounds(segments)
     out: list[Moment] = []
     taken = list(used or [])
     for m in sorted(moments, key=lambda m: -m.score):
         if words:
-            starts = [w["start"] for w in words if abs(w["start"] - m.start) < 2.0]
-            ends = [w["end"] for w in words if abs(w["end"] - m.end) < 2.0]
-            if starts:
-                m.start = min(starts, key=lambda t: abs(t - m.start))
-            if ends:
-                m.end = min(ends, key=lambda t: abs(t - m.end))
+            # Start: the nearest sentence start up to 3.5 s earlier or 1.5 s later; else the nearest word start.
+            cands = [t for t in sent_starts if -1.5 <= m.start - t <= 3.5]
+            if cands:
+                m.start = min(cands, key=lambda t: abs(t - m.start))
+            else:
+                starts = [w["start"] for w in words if abs(w["start"] - m.start) < 2.0]
+                if starts:
+                    m.start = min(starts, key=lambda t: abs(t - m.start))
+            # End: the nearest sentence end within 2.5 s either way (later preferred if it still fits); else a word end.
+            cands = [t for t in sent_ends if abs(t - m.end) <= 2.5 and t - m.start <= max_s - 0.5 and t > m.start + 1]
+            if cands:
+                m.end = max(cands) if any(t >= m.end for t in cands) else min(cands, key=lambda t: abs(t - m.end))
+            else:
+                ends = [w["end"] for w in words if abs(w["end"] - m.end) < 2.0]
+                if ends:
+                    m.end = min(ends, key=lambda t: abs(t - m.end))
         m.title = clean_title(m.title)
-        m.start = max(0.0, m.start - 0.15)
+        m.start = max(0.0, m.start - 0.2)
         m.end = m.end + 0.35
         if m.end - m.start > max_s:
             m.end = m.start + max_s
