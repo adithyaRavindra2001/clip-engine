@@ -4,6 +4,8 @@
   clip run URL --creator NAME    clip one VOD / podcast (URL or local file)
   clip discover                  prospects report only
   clip morning                   auto-pick today's uploads -> todays-yt/<date>/<campaign>-NN.mp4 + .jpg, one UPLOAD.txt
+  clip upload                    publish today's pack: YouTube Studio upload + Content Rewards submission
+  clip login                     open the automation Chrome profile to sign in once
   clip review                    open the local review page
   clip learn                     update the style guide from your decisions + real views
   clip stats                     quick performance summary
@@ -15,7 +17,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import discover, learn, morning, pipeline, review, store
+from . import discover, learn, morning, pipeline, review, store, uploader
 from .config import Config
 
 
@@ -87,6 +89,14 @@ def cmd_morning(cfg, db, args):
     print(f"Pack: {root}")
 
 
+def cmd_upload(cfg, db, args):
+    uploader.run(cfg, db, args.date, limit=args.limit, spacing=args.spacing, dry_run=args.dry_run, only=args.only)
+
+
+def cmd_login(cfg, db, args):
+    uploader.login(cfg)
+
+
 def cmd_review(cfg, db, args):
     review.serve(cfg, args.port)
 
@@ -132,6 +142,16 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("--min-qa", type=int, default=None)
     m.add_argument("--creator", default=None, help="pack only this campaign (appends to today's folder)")
     m.set_defaults(fn=cmd_morning)
+
+    u = sub.add_parser("upload", help="publish today's pack through Chrome (YouTube Studio + Content Rewards)")
+    u.add_argument("--date", default=None)
+    u.add_argument("--limit", type=int, default=20, help="hard cap per run")
+    u.add_argument("--spacing", type=int, default=240, help="seconds between clips (jittered)")
+    u.add_argument("--only", default=None, help="only clips whose name starts with this, e.g. kai")
+    u.add_argument("--dry-run", action="store_true")
+    u.set_defaults(fn=cmd_upload)
+
+    sub.add_parser("login", help="open the automation Chrome profile to sign in to YouTube + Content Rewards").set_defaults(fn=cmd_login)
 
     v = sub.add_parser("review", help="open the review page")
     v.add_argument("--port", type=int, default=8765)

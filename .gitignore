@@ -17,3 +17,5 @@ todays-yt/
 sfx/**/*.wav
 sfx/**/*.mp3
 experiments/**/*.mp4
+data/browser-profile/
+data/upload-debug/

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Publishes the day's pack at 21:30 local time: YouTube Studio upload, then Content Rewards submission.
+  Needs the Mac awake (sudo pmset -c sleep 0) and a signed-in automation profile (clip login).
+  Install:  ./scripts/install_schedule.sh
+  Remove:   launchctl unload ~/Library/LaunchAgents/com.clipengine.upload.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.clipengine.upload</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>cd "/Users/adithya/Desktop/projects/clip-engine" &amp;&amp; source .venv/bin/activate &amp;&amp; clip upload --limit 20 --spacing 240</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>/Users/adithya/Library/Logs/clipengine/upload.log</string>
+  <key>StandardErrorPath</key><string>/Users/adithya/Library/Logs/clipengine/upload.log</string>
+</dict>
+</plist>

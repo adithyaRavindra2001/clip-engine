@@ -130,7 +130,7 @@ def build(cfg: Config, db, day: str | None = None, limit: int = 5, min_qa: int =
         full_desc = (desc + ("\n\n" + extra if extra else "")).strip()
         db.execute("UPDATE clips SET status='approved', reason='auto-selected for morning pack', decided_at=CURRENT_TIMESTAMP WHERE id=?", (r["id"],))
         summary += [
-            f"########## {name}  ({name}.mp4, thumbnail {name}.jpg)  [score {r['score']}, QA {res['qa']}, {res['duration']}s]",
+            f"########## {name}  ({name}.mp4, thumbnail {name}.jpg)  [score {r['score']}, QA {res['qa']}, {res['duration']}s]  [clip {r['id']}]",
             warn.rstrip("\n") if warn else None,
             f"TITLE:\n{r['title']}",
             f"DESCRIPTION (paste as is, hashtags included):\n{full_desc}",
