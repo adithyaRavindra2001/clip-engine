@@ -60,6 +60,16 @@ def parse_pack(upload_txt: Path) -> list[dict]:
     return out
 
 
+def _move_done(root: Path, name: str) -> None:
+    """Published + submitted clips move to <pack>/done/ so the folder shows only what is still to go."""
+    done = root / "done"
+    done.mkdir(exist_ok=True)
+    for ext in (".mp4", ".jpg"):
+        f = root / f"{name}{ext}"
+        if f.exists():
+            shutil.move(str(f), done / f.name)
+
+
 def _note(upload_txt: Path, name: str, line: str) -> None:
     """Append a status line to a clip's block (POSTED: ..., SUBMITTED: ...)."""
     text = upload_txt.read_text()
@@ -362,6 +372,7 @@ def record_manual(cfg: Config, db, name: str, url: str, day: str | None = None) 
         db.execute("UPDATE clips SET status='posted', posted_url=?, decided_at=CURRENT_TIMESTAMP WHERE id=?", (url, e["id"]))
         db.commit()
     tally_add(cfg, day, name, name.rsplit("-", 1)[0], e["title"], url, now, now, "manual")
+    _move_done(root, name)
     print(f"logged {name} -> {url}")
 
 
@@ -427,6 +438,7 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
                 with (cfg.data_dir / "uploads.log").open("a") as log:
                     log.write(json.dumps({"date": day, "name": name, "url": url, "campaign": e["campaign_url"],
                                           "at": datetime.now().isoformat(timespec="seconds")}) + "\n")
+                _move_done(root, name)
                 done += 1
             except Exception as ex:
                 shot = _debug(page, name, cfg)
@@ -584,6 +596,7 @@ def reconcile(cfg: Config, db, dry_run: bool = False, window_min: int = 30, forc
                                 if (p / "UPLOAD.txt").exists() and any(e["name"] == name for e in parse_pack(p / "UPLOAD.txt"))), None)
                     if day:
                         _note(cfg.root / "todays-yt" / day / "UPLOAD.txt", name, f"SUBMITTED: {stamp} (reconcile)")
+                        _move_done(cfg.root / "todays-yt" / day, name)
                 tally_add(cfg, date.today().isoformat(), name or v["id"], (name or "?").rsplit("-", 1)[0], v["title"], url, stamp, stamp, "reconcile")
                 db.execute("UPDATE clips SET status='posted', posted_url=? WHERE posted_url IS NULL AND title=?", (url, v["title"]))
                 db.commit()
