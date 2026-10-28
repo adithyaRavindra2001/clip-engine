@@ -16,6 +16,12 @@ twitch:
 
 youtube:
   api_key: ""                 # Google Cloud console -> enable "YouTube Data API v3" -> API key
+  # One brand channel per niche (same Google account). Auto-joined campaigns are routed by genre; a campaign
+  # whose genre has no channel here is onboarded as a prospect until you add one.
+  channels:
+    money: ""                            # crypto, finance, founders, business podcasts
+    streamers: ""                            # IRL, gaming, reaction, Kick/Twitch personalities
+    fighters: ""                            # MMA, boxing, combat and sports podcasts
 
 transcription:
   model: mlx-community/whisper-large-v3-turbo   # on non-Mac machines: "large-v3-turbo"

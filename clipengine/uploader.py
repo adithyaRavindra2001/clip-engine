@@ -150,16 +150,59 @@ def _dismiss_suggestions(page) -> None:
         pass
 
 
-def _channel(page, want: str = "") -> str:
+def _channel(page, want: str = "", cfg: Config | None = None) -> str:
     """Land in Studio and return the channel id. With `want` (a brand channel of the signed-in account) Studio is
     opened on that channel directly; if it bounces to another channel the profile has no access to it, so stop."""
-    page.goto(f"{STUDIO}/channel/{want}" if want else STUDIO, wait_until="domcontentloaded")
-    page.wait_for_url(re.compile(r"studio\.youtube\.com/channel/UC[\w-]+"), timeout=60_000)
-    got = re.search(r"/channel/(UC[\w-]+)", page.url).group(1)
+    def land() -> str:
+        page.goto(f"{STUDIO}/channel/{want}" if want else STUDIO, wait_until="domcontentloaded")
+        page.wait_for_url(re.compile(r"studio\.youtube\.com/channel/UC[\w-]+"), timeout=60_000)
+        return re.search(r"/channel/(UC[\w-]+)", page.url).group(1)
+
+    got = land()
+    if want and got != want:
+        # Studio sometimes keeps the previously active channel on the first hop; switching through the account's
+        # channel list (youtube.com/channel_switcher) makes it stick, then the direct URL works.
+        for attempt in range(3):
+            try:
+                page.goto("https://www.youtube.com/channel_switcher", wait_until="domcontentloaded")
+                page.wait_for_timeout(4000)
+                title = _channel_title(cfg or Config(Path.cwd()), want)
+                if title:
+                    page.get_by_text(title, exact=True).first.click()
+                    page.wait_for_timeout(5000)
+            except Exception:
+                pass
+            got = land()
+            if got == want:
+                break
+            page.wait_for_timeout(3000)
     if want and got != want:
         raise RuntimeError(f"Studio opened channel {got}, not {want}: add that brand channel to the signed-in account "
                            f"(clip login) or fix youtube_channel in creators.yaml")
     return got
+
+
+_TITLES: dict[str, str] = {}
+
+
+def _channel_title(cfg: Config, channel_id: str) -> str:
+    """Public channel title via the Data API (cached), used to click the right row in the channel switcher."""
+    if channel_id in _TITLES:
+        return _TITLES[channel_id]
+    import json as _json
+    import urllib.parse
+    import urllib.request
+    key = _api_key(cfg)
+    if not key:
+        return ""
+    try:
+        q = urllib.parse.urlencode({"part": "snippet", "id": channel_id, "key": key})
+        with urllib.request.urlopen("https://www.googleapis.com/youtube/v3/channels?" + q, timeout=20) as r:
+            items = _json.load(r).get("items", [])
+        _TITLES[channel_id] = items[0]["snippet"]["title"] if items else ""
+    except Exception:
+        _TITLES[channel_id] = ""
+    return _TITLES[channel_id]
 
 
 def _channel_for(cfg: Config, name: str) -> str:
@@ -232,7 +275,7 @@ def _channel_healthy(page) -> None:
 
 def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, name: str = "", channel_id: str = "") -> str:
     """Upload one file (or resume its draft), fill details, publish as Public (not for kids). Returns the video id."""
-    channel = _channel(page, channel_id or _channel_for(cfg, name))
+    channel = _channel(page, channel_id or _channel_for(cfg, name), cfg)
     _channel_healthy(page)
     print(f"    studio channel {channel}", flush=True)
     if not (name and _open_draft(page, channel, name, title)):

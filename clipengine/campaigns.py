@@ -208,8 +208,12 @@ def enrich(page, cands: list[dict], max_pages: int = 15) -> list[dict]:
 # ---------- 3. rank with Claude ----------
 
 RANK_PROMPT = """You pick clipping campaigns for a one-person YouTube Shorts clipper based in India, paid through Whop
-Content Rewards. Channel: one general Shorts channel, English, audience mostly US/UK/CA/AU + India, a few thousand
-views per clip on a good day, 5 clips per campaign per day. The clipper can only post on YouTube Shorts.
+Content Rewards. Channels: three niche Shorts channels under one account, English, audience mostly US/UK/CA/AU + India,
+a few thousand views per clip on a good day, 5 clips per campaign per day. The clipper can only post on YouTube Shorts.
+The niches are: MONEY (crypto, markets, finance, founders, business podcasts), STREAMERS (IRL, gaming, reaction,
+Kick/Twitch/YouTube personalities), FIGHTERS (MMA, boxing, combat and other sports podcasts). A campaign that fits one
+of them can start tomorrow; a campaign in any other genre (music promo, motivation, beauty, reality TV...) would need
+a new channel warmed up from zero, so score it lower and set join only if it is exceptional.
 
 Rank the candidate campaigns below by expected money over the next two weeks. Consider: CPM, budget LEFT (not total),
 whether YouTube Shorts is accepted, competition (clippers count), minimum views before payout, whether footage is
@@ -237,7 +241,11 @@ Return ONLY JSON:
  "cpm": number, "edit_style": "podcast|streamer", "required_tags": ["#tag", "@mention"],
  "campaign_rules": "the rules the picker must obey, compressed but complete",
  "music": true/false, "needs_watermark_file": true/false,
+ "genre": "money|streamers|fighters|other",
  "confidence": 0-100, "notes": "anything a human must do (download a watermark, link an account, etc.)"}
+"genre" decides which niche channel posts the clips: money = crypto/markets/finance/founders/business podcasts,
+streamers = IRL/gaming/reaction/Kick/Twitch/YouTube personalities, fighters = MMA/boxing/combat/sports podcasts,
+other = anything else (music artists, motivation, beauty, reality TV).
 Put the exact YouTube source URLs if the brief or its links name them; if sources are only a Drive folder or a
 channel with no specific videos, set sources [] and give the handle. Confidence < 70 if sources or required tags are unclear.
 
@@ -316,8 +324,15 @@ def onboard(cfg: Config, url: str, brief: str, cpm_hint: float | None) -> dict:
     out = _json_from(_claude(ONBOARD_PROMPT + brief)) or {}
     if not isinstance(out, dict) or not out.get("name"):
         return {"ok": False, "reason": "Claude returned no entry"}
+    # Route to the niche channel; a genre without a channel is parked as a prospect (one niche per channel, always).
+    channels = (cfg.raw.get("youtube") or {}).get("channels") or {}
+    genre = out.get("genre") if out.get("genre") in ("money", "streamers", "fighters", "other") else "other"
+    channel = channels.get(genre) or ""
+    if not channel:
+        out["notes"] = (f"genre '{genre}' has no channel: create a brand channel for it and set youtube.channels.{genre} "
+                        f"in config.yaml, then set status: allowed. " + str(out.get("notes") or "")).strip()
     allowed = (out.get("confidence", 0) >= 70 and (out.get("sources") or out.get("handle"))
-               and not out.get("needs_watermark_file"))
+               and not out.get("needs_watermark_file") and bool(channel))
     entry = {
         "name": re.sub(r"[^A-Za-z0-9]", "", out["name"])[:30] or "Campaign",
         "slug": re.sub(r"[^a-z0-9]", "", (out.get("slug") or out["name"]).lower())[:12],
@@ -330,6 +345,7 @@ def onboard(cfg: Config, url: str, brief: str, cpm_hint: float | None) -> dict:
         "cpm": float(out.get("cpm") or cpm_hint or 0),
         "edit_style": out.get("edit_style") if out.get("edit_style") in ("streamer", "podcast") else "podcast",
         "music": bool(out.get("music", True)),
+        "youtube_channel": channel,
     }
     if out.get("sources"):
         entry["sources"] = [s for s in out["sources"] if isinstance(s, str) and "youtu" in s][:10]
