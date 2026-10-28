@@ -158,6 +158,13 @@ def pick_moments(cfg: Config, db, creator: Creator, title: str, segments: list[d
     fb = feedback_examples(db)
     if fb:
         context.append(fb)
+    try:
+        from .analytics import performance_examples
+        perf = performance_examples(db, creator.slug)
+    except Exception:
+        perf = ""
+    if perf:
+        context.append(perf)
     if used:
         context.append("ALREADY CLIPPED from this video (do not pick anything overlapping these; find NEW moments):\n"
                        + "\n".join(f"- {_fmt(s)}-{_fmt(e)} ({s:.0f}s-{e:.0f}s)" for s, e in used))

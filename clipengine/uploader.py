@@ -150,10 +150,39 @@ def _dismiss_suggestions(page) -> None:
         pass
 
 
-def _channel(page) -> str:
-    page.goto(STUDIO, wait_until="domcontentloaded")
+def _channel(page, want: str = "") -> str:
+    """Land in Studio and return the channel id. With `want` (a brand channel of the signed-in account) Studio is
+    opened on that channel directly; if it bounces to another channel the profile has no access to it, so stop."""
+    page.goto(f"{STUDIO}/channel/{want}" if want else STUDIO, wait_until="domcontentloaded")
     page.wait_for_url(re.compile(r"studio\.youtube\.com/channel/UC[\w-]+"), timeout=60_000)
-    return re.search(r"/channel/(UC[\w-]+)", page.url).group(1)
+    got = re.search(r"/channel/(UC[\w-]+)", page.url).group(1)
+    if want and got != want:
+        raise RuntimeError(f"Studio opened channel {got}, not {want}: add that brand channel to the signed-in account "
+                           f"(clip login) or fix youtube_channel in creators.yaml")
+    return got
+
+
+def _channel_for(cfg: Config, name: str) -> str:
+    """Campaign -> youtube_channel from creators.yaml, keyed by the pack name's slug (fomo-03 -> fomo)."""
+    slug = name.rsplit("-", 1)[0]
+    for c in cfg.creators():
+        if c.slug == slug:
+            return c.youtube_channel or ""
+    return ""
+
+
+def _interleave(todo: list[dict]) -> list[dict]:
+    """Round-robin across campaigns so each channel gets one clip per cycle (one niche's uploads end up ~2 h apart
+    instead of five in a row), and the Shorts feed sees a steady cadence per channel."""
+    groups: dict[str, list[dict]] = {}
+    for e in todo:
+        groups.setdefault(e["name"].rsplit("-", 1)[0], []).append(e)
+    out = []
+    while any(groups.values()):
+        for g in list(groups):
+            if groups[g]:
+                out.append(groups[g].pop(0))
+    return out
 
 
 def _open_draft(page, channel: str, name: str, title: str) -> bool:
@@ -201,9 +230,9 @@ def _channel_healthy(page) -> None:
         raise RuntimeError("YouTube Studio is showing a strike/warning notice; stopping all uploads until a human looks")
 
 
-def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, name: str = "") -> str:
+def youtube_upload(page, cfg: Config, mp4: Path, title: str, description: str, name: str = "", channel_id: str = "") -> str:
     """Upload one file (or resume its draft), fill details, publish as Public (not for kids). Returns the video id."""
-    channel = _channel(page)
+    channel = _channel(page, channel_id or _channel_for(cfg, name))
     _channel_healthy(page)
     print(f"    studio channel {channel}", flush=True)
     if not (name and _open_draft(page, channel, name, title)):
@@ -486,9 +515,9 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
     if not upload_txt.exists():
         print(f"No pack for {day} ({upload_txt})")
         return 0
-    todo = [e for e in parse_pack(upload_txt) if not e["submitted"] and (root / f"{e['name']}.mp4").exists()
-            and (not only or e["name"].startswith(only))]
-    print(f"{day}: {len(todo)} clip(s) to publish (cap {limit}, ~{spacing}s apart)")
+    todo = _interleave([e for e in parse_pack(upload_txt) if not e["submitted"] and (root / f"{e['name']}.mp4").exists()
+                        and (not only or e["name"].startswith(only))])
+    print(f"{day}: {len(todo)} clip(s) to publish (cap {limit}, ~{spacing}s apart, campaigns interleaved)")
     if dry_run:
         for e in todo[:limit]:
             print(f"  {e['name']}: {e['title']!r} -> {e['campaign_url']}" + ("  (already posted: %s)" % e["posted"] if e["posted"] else ""))
@@ -678,6 +707,12 @@ def reconcile(cfg: Config, db, dry_run: bool = False, window_min: int = 30, forc
     try:
         channel = _channel(page)
         videos = channel_videos(cfg, channel)
+        # every campaign channel too (brand channels configured in creators.yaml)
+        for extra in sorted({c.youtube_channel for c in cfg.creators() if c.youtube_channel} - {channel}):
+            try:
+                videos += channel_videos(cfg, extra)
+            except Exception as e:
+                print(f"  channel {extra}: listing failed ({str(e)[:60]})")
         submitted = cr_submissions(page)
         recorded = {re.search(r"([\w-]{11})$", r["youtube_url"].rstrip("/")).group(1) for r in tally_rows(cfg)
                     if r.get("submitted_at") and re.search(r"[\w-]{11}$", r["youtube_url"].rstrip("/"))}

@@ -25,7 +25,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import campaigns, discover, instagram, learn, morning, notify, pipeline, quota, review, store, uploader
+from . import analytics, campaigns, discover, instagram, learn, morning, notify, pipeline, quota, review, store, uploader
 from .config import Config
 
 
@@ -133,6 +133,12 @@ def cmd_notify(cfg, db, args):
     print("sent via: " + ", ".join(notify.send(cfg, args.title, args.body or "")))
 
 
+def cmd_analytics(cfg, db, args):
+    analytics.refresh(cfg, db, days=args.days, studio=not args.no_studio)
+    print()
+    print(analytics.report(cfg, db, days=args.days))
+
+
 def cmd_health(cfg, db, args):
     ok, text = quota.health(cfg, args.date, notify=not args.no_notify)
     print(text)
@@ -236,6 +242,11 @@ def main(argv: list[str] | None = None) -> None:
     nt.add_argument("title", nargs="?", default="clip-engine"); nt.add_argument("body", nargs="?", default="")
     nt.add_argument("--setup-telegram", action="store_true")
     nt.set_defaults(fn=cmd_notify)
+
+    an = sub.add_parser("analytics", help="refresh views + Shorts hold rate for recent clips (Data API + Studio), print the performance table")
+    an.add_argument("--days", type=int, default=7)
+    an.add_argument("--no-studio", action="store_true", help="Data API only (no Chrome): views/likes but no hold rate")
+    an.set_defaults(fn=cmd_analytics)
 
     h = sub.add_parser("health", help="morning audit of yesterday's pack: packed/published/submitted per campaign + launchd jobs")
     h.add_argument("--date", default=None, help="pack date to audit (default: yesterday)")

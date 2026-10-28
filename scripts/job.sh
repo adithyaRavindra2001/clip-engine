@@ -48,7 +48,10 @@ case "$JOB" in
     clip reconcile || true
     if grep -q "^IG_ACCESS_TOKEN=." .env 2>/dev/null; then clip instagram --limit 10 --spacing 1200 || echo "[instagram] failed (exit $?)"; fi
     ;;
-  health)  clip health || rc=$? ;;
+  health)
+    clip analytics --days 7 || echo "[analytics] refresh failed (exit $?)"   # views + hold rate first, so the report has them
+    clip health || rc=$?
+    ;;
   review)  exec clip review ;;
   *) echo "unknown job $JOB"; exit 2 ;;
 esac

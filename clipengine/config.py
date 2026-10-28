@@ -72,6 +72,10 @@ class Creator:
     watermark: str = ""
     # Short lowercase label used for pack folder names (todays-yt/<date>/<slug>-01/). Default: the name, lowercased.
     slug: str = ""
+    # YouTube channel this campaign publishes to (the UC... id from the Studio URL). Empty = the profile's default
+    # channel. One channel per niche: the Shorts feed models one audience per channel, so crypto, streamer and
+    # sports clips on one channel starve each other. All channels must be brand channels of the signed-in account.
+    youtube_channel: str = ""
 
     def __post_init__(self):
         self.slug = re.sub(r"[^a-z0-9]+", "", (self.slug or self.name).lower()) or "clip"

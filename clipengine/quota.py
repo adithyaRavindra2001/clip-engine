@@ -88,7 +88,7 @@ def views_table(cfg: Config, day: str | None = None) -> str:
         v = int(s.get("viewCount", 0)); total += v
         lines.append(f"{name:<14}{v:>7}{int(s.get('likeCount', 0)):>5}  {title[:34]}")
     lines.sort(key=lambda l: -int(l.split()[1]))
-    return f"{'clip':<14}{'views':>7}{'likes':>5}  title\n" + "\n".join(lines) + f"\n{'total':<14}{total:>7}"
+    return f"{'clip':<14}{'views':>7} {'likes':>4}  title\n" + "\n".join(lines) + f"\n{'total':<14}{total:>7}"
 
 
 def health(cfg: Config, day: str | None = None, notify: bool = True) -> tuple[bool, str]:
@@ -134,9 +134,16 @@ def health(cfg: Config, day: str | None = None, notify: bool = True) -> tuple[bo
             if bad:
                 lines.append(f"  {name}: {bad[-1].strip()[:140]}")
                 problems.append(f"{name}: {bad[-1].strip()[:60]}")
+    # Distribution: is the Shorts feed still testing our uploads? (needs `clip analytics` to have run)
+    from . import analytics, store
+    db = store.connect(cfg.data_dir)
+    state, why = analytics.throttle_state(db)
+    if state == "throttled":
+        problems.append("Shorts feed not distributing (see analytics)")
     ok = not problems
     lines.append("")
     lines.append("ALL GOOD" if ok else "PROBLEMS: " + "; ".join(problems))
+    lines += ["", "Performance, last 7 days:", analytics.report(cfg, db, days=7)]
     lines += ["", f"Views for the {day} clips (live):", views_table(cfg, day)]
     all_rows = uploader.tally_rows(cfg)
     lines.append(f"Published so far: {len(all_rows)} clips")
