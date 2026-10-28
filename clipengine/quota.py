@@ -155,3 +155,35 @@ def health(cfg: Config, day: str | None = None, notify: bool = True) -> tuple[bo
         from . import notify as push
         push.send(cfg, "clip-engine " + ("✅ all good" if ok else "⚠️ ATTENTION") + f" ({day})", text)
     return ok, text
+
+
+def pack_list(cfg: Config, day: str | None = None) -> str:
+    """What the day's pack holds, for the phone: per campaign, each clip's name, length, title and target channel."""
+    from . import uploader
+    day = day or date.today().isoformat()
+    upload_txt = pack_root(cfg, day) / "UPLOAD.txt"
+    if not upload_txt.exists():
+        return f"no pack for {day}"
+    labels = {v: k for k, v in ((cfg.raw.get("youtube") or {}).get("channels") or {}).items()}
+    creators = {c.slug: c for c in cfg.creators()}
+    target = int(cfg["morning"]["per_campaign"])
+    groups: dict[str, list[str]] = {}
+    for e in uploader.parse_pack(upload_txt):
+        m = NAME.fullmatch(e["name"])
+        slug = m.group(1) if m else e["name"]
+        secs = re.search(r"QA \d+, ([\d.]+)s\]", e["block"])
+        state = "done" if e.get("submitted") else ("posted" if e.get("posted") else "")
+        groups.setdefault(slug, []).append(
+            f"  {e['name']:<14}{(secs.group(1) + 's') if secs else '':>6}  {e['title'][:60]}" + (f"  [{state}]" if state else ""))
+    lines = [f"pack {day}: {sum(len(v) for v in groups.values())} clips"]
+    for c in _active(cfg):
+        rows = groups.get(c.slug, [])
+        chan = labels.get(c.youtube_channel, "main")
+        flag = "" if len(rows) == target else f"  <-- {len(rows)}/{target}"
+        lines.append(f"\n{c.name} -> {chan} channel ({len(rows)}){flag}")
+        lines += rows or ["  (none)"]
+    for slug, rows in groups.items():
+        if slug not in {c.slug for c in _active(cfg)}:
+            lines.append(f"\n{slug} (campaign no longer active, {len(rows)})")
+            lines += rows
+    return "\n".join(lines)

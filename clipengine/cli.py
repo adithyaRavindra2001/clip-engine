@@ -48,21 +48,42 @@ def cmd_daily(cfg, db, args):
         if not creators:
             raise SystemExit(f"no allowed campaign named {only!r}")
     force = getattr(args, "force", False)
-    # 1. Campaigns with fixed footage: cut NEW moments from the least-used source, best-paying campaign first.
+    # 1. Campaigns with fixed footage: cut NEW moments from the source with the most uncut footage left,
+    #    best-paying campaign first. A source that yields nothing new is skipped for the next one in the same
+    #    run (a 5-minute vlog with 6 clips cut is exhausted even though it has the lowest clip count).
+    min_s = float(cfg["clips"]["min_seconds"])
     for c in [c for c in creators if c.sources]:
         stock = store.pending_count(db, c.name)
         if stock >= enough and not force:
             print(f"{c.name}: {stock} drafts in stock, skipping today's cut")
             continue
-        for _ in range(args.max_videos):
-            src = min(c.source_urls, key=lambda u: store.clip_count(db, u))
-            print(f"{c.name} (${c.cpm:.2f} CPM): cutting new moments from {src}")
+        def room(u):
+            h = store.headroom(db, cfg.data_dir, u)
+            return float("inf") if h is None else h
+        order = sorted(c.source_urls, key=lambda u: (-room(u), store.clip_count(db, u)))
+        got = 0
+        for src in order:
+            if got >= args.max_videos:
+                break
+            h = store.headroom(db, cfg.data_dir, src)
+            if h is not None and h < 3 * min_s:
+                print(f"{c.name}: {src} is exhausted ({h:.0f}s uncut), skipping")
+                continue
+            print(f"{c.name} (${c.cpm:.2f} CPM): cutting new moments from {src}" + (f" ({h/60:.0f} min uncut)" if h else ""))
             try:
-                total += pipeline.process(cfg, db, src, c.name, force=True)
+                n = pipeline.process(cfg, db, src, c.name, force=True)
             except SystemExit as e:
                 print(f"  [waiting] {e}")
+                got += 1          # picks are being answered; count it so one run doesn't open every source
+                continue
             except Exception as e:
                 print(f"  [error] {src}: {e}")
+                continue
+            total += n
+            if n:
+                got += 1
+            else:
+                print(f"  nothing new from this source; trying the next one")
     # 2. Everyone else: discover fresh uploads from their channels.
     rest = [c for c in creators if not c.sources]
     if rest:
@@ -106,6 +127,14 @@ def cmd_morning(cfg, db, args):
                          min_qa=args.min_qa or int(m["min_qa"]), only=args.creator)
     print((root / "UPLOAD.txt").read_text())
     print(f"Pack: {root}")
+
+
+def cmd_pack_list(cfg, db, args):
+    text = quota.pack_list(cfg, args.date)
+    print(text)
+    if args.notify:
+        day = args.date or datetime.now().strftime("%Y-%m-%d")
+        print("sent via: " + ", ".join(notify.send(cfg, f"clip-engine pack {day}", text)))
 
 
 def cmd_upload(cfg, db, args):
@@ -237,6 +266,11 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--date", default=None)
     q.add_argument("--short", action="store_true", help="print only the names of campaigns still below target, one per line")
     q.set_defaults(fn=cmd_quota)
+
+    pl = sub.add_parser("pack-list", help="list the day's pack per campaign (name, length, title, channel); --notify pushes it to your phone")
+    pl.add_argument("--date", default=None)
+    pl.add_argument("--notify", action="store_true")
+    pl.set_defaults(fn=cmd_pack_list)
 
     nt = sub.add_parser("notify", help="push a message to your phone (Telegram/ntfy) + Mac; --setup-telegram once")
     nt.add_argument("title", nargs="?", default="clip-engine"); nt.add_argument("body", nargs="?", default="")

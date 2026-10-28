@@ -42,6 +42,7 @@ case "$JOB" in
     ./scripts/daily_claude.sh 1 || rc=$?
     short="$(clip quota --short | tr '\n' ' ')"
     if [ -n "$short" ]; then notify "clip-engine: pack short" "$(date +%F): below 5 clips for $short"; rc=1; fi
+    clip pack-list --notify || echo "[pack-list] failed (exit $?)"   # the list of tonight's clips, to the phone
     ;;
   upload)
     clip upload --limit 30 --spacing 1500 || rc=$?     # 5 per campaign, ~25 min apart from 21:30 IST through the US day

@@ -115,9 +115,32 @@ def _debug(page, tag: str, cfg: Config) -> Path:
     return shot
 
 
-def _notify(title: str, body: str) -> None:
-    subprocess.run(["osascript", "-e", f'display notification "{body}" with title "{title}"'],
+def _notify(title: str, body: str, cfg: Config | None = None) -> None:
+    """Phone (Telegram/ntfy) + Mac when a config is given, Mac only otherwise."""
+    if cfg is not None:
+        try:
+            from . import notify
+            notify.send(cfg, title, body)
+            return
+        except Exception as e:
+            print(f"[notify] {e}")
+    subprocess.run(["osascript", "-e", f'display notification "{body[:200]}" with title "{title}"'],
                    capture_output=True)
+
+
+def published_list(cfg: Config, day: str) -> str:
+    """One line per clip published on `day`: name, channel, link, submitted or not."""
+    rows = [r for r in tally_rows(cfg) if r.get("date") == day]
+    if not rows:
+        return "(nothing published)"
+    labels = {v: k for k, v in ((cfg.raw.get("youtube") or {}).get("channels") or {}).items()}
+    by_slug = {c.slug: labels.get(c.youtube_channel, "main") for c in cfg.creators()}
+    lines = []
+    for r in rows:
+        slug = r["name"].rsplit("-", 1)[0]
+        sub = "submitted" if r.get("submitted_at") else "NOT submitted"
+        lines.append(f"{r['name']:<14}{by_slug.get(slug, '?'):<10}{sub:<14}{r['youtube_url']}")
+    return "\n".join(lines)
 
 
 def _sleep(a: float, b: float) -> None:
@@ -612,7 +635,7 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
             except Exception as ex:
                 shot = _debug(page, name, cfg)
                 print(f"  [stop] {name}: {ex}\n         screenshot: {shot}", flush=True)
-                _notify("clip upload stopped", f"{name}: {str(ex)[:80]}")
+                _notify("clip upload stopped", f"{name}: {str(ex)[:200]}", cfg)
                 break
             if done < min(limit, len(todo)):
                 pause = spacing * random.uniform(0.75, 1.5)
@@ -621,7 +644,7 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
     finally:
         ctx.close()
         pw.stop()
-    _notify("clip upload", f"{done} clip(s) published and submitted for {day}")
+    _notify(f"clip upload: {done} published for {day}", published_list(cfg, day), cfg)
     print(f"{done} published.")
     return done
 

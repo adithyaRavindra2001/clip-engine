@@ -85,3 +85,24 @@ def used_ranges(db: sqlite3.Connection, video_id: int) -> list[tuple[float, floa
 def clip_count(db: sqlite3.Connection, url: str) -> int:
     row = db.execute("SELECT COUNT(*) n FROM clips c JOIN videos v ON v.id = c.video_id WHERE v.url = ?", (url,)).fetchone()
     return int(row["n"]) if row else 0
+
+
+def headroom(db: sqlite3.Connection, data_dir: Path, url: str) -> float | None:
+    """Seconds of a fixed source not yet cut into clips (duration from its cached transcript minus the used ranges).
+    None when the video was never transcribed, i.e. an untouched source."""
+    import json
+    from .pipeline import slug
+    row = db.execute("SELECT id, title FROM videos WHERE url = ?", (url,)).fetchone()
+    if not row:
+        return None
+    t = data_dir / "videos" / f"{row['id']}-{slug(row['title'] or '')}" / "transcript.json"
+    if not t.exists():
+        return None
+    try:
+        segs = json.loads(t.read_text())
+        segs = segs["segments"] if isinstance(segs, dict) else segs
+        duration = float(segs[-1]["end"])
+    except Exception:
+        return None
+    used = sum(e - s for s, e in used_ranges(db, row["id"]))
+    return max(0.0, duration - used)
