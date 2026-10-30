@@ -60,7 +60,9 @@ def cmd_daily(cfg, db, args):
         def room(u):
             h = store.headroom(db, cfg.data_dir, u)
             return float("inf") if h is None else h
-        order = sorted(c.source_urls, key=lambda u: (-room(u), store.clip_count(db, u)))
+        # Answered picks first (render what Claude already chose), then the source with the most uncut footage.
+        order = sorted(c.source_urls, key=lambda u: (0 if store.answered_picks(db, cfg.data_dir, u) else 1,
+                                                     -room(u), store.clip_count(db, u)))
         got = 0
         for src in order:
             if got >= args.max_videos:
@@ -127,6 +129,24 @@ def cmd_morning(cfg, db, args):
                          min_qa=args.min_qa or int(m["min_qa"]), only=args.creator)
     print((root / "UPLOAD.txt").read_text())
     print(f"Pack: {root}")
+
+
+def cmd_proof(cfg, db, args):
+    from . import proof
+    if args.due:
+        proof.run_due(cfg, db, do_send=args.send, limit=args.limit)
+        return
+    if not (args.video or args.name):
+        raise SystemExit("give --video ID or --name fomo-01, or --due for every clip past its threshold")
+    row = db.execute("SELECT video, name, campaign, views FROM stats WHERE video = ? OR name = ?",
+                     (args.video or "", args.name or "")).fetchone()
+    if not row:
+        raise SystemExit("not in the stats table yet: run `clip analytics` first")
+    print(f"  {row['name']}: recording Studio analytics ({row['views']} views)…", flush=True)
+    out = proof.record(cfg, db, row["video"], row["name"], row["campaign"], row["views"])
+    print("\n".join("  " + p for p in __import__("json").loads(out["files"])) + (f"\n  error: {out['error']}" if out["error"] else ""))
+    if args.send:
+        print("  sent to phone" if proof.send(cfg, db, out) else "  not sent")
 
 
 def cmd_pack_list(cfg, db, args):
@@ -266,6 +286,14 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--date", default=None)
     q.add_argument("--short", action="store_true", help="print only the names of campaigns still below target, one per line")
     q.set_defaults(fn=cmd_quota)
+
+    pr = sub.add_parser("proof", help="screen-record a clip's Studio analytics (views, retention, geography) for campaign payout proof")
+    pr.add_argument("--video", default=None, help="YouTube video id")
+    pr.add_argument("--name", default=None, help="pack name, e.g. fomo-03")
+    pr.add_argument("--due", action="store_true", help="every clip past its campaign's proof_views with no proof yet")
+    pr.add_argument("--send", action="store_true", help="push the recording + screenshots to Telegram")
+    pr.add_argument("--limit", type=int, default=5)
+    pr.set_defaults(fn=cmd_proof)
 
     pl = sub.add_parser("pack-list", help="list the day's pack per campaign (name, length, title, channel); --notify pushes it to your phone")
     pl.add_argument("--date", default=None)

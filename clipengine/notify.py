@@ -83,3 +83,37 @@ def send(cfg: Config, title: str, body: str) -> list[str]:
         except Exception as e:
             print(f"[notify] ntfy failed: {e}")
     return ok
+
+
+def send_files(cfg: Config, caption: str, paths: list) -> bool:
+    """Telegram sendDocument for each file (video first), caption on the first one. Returns True if any went."""
+    import mimetypes
+    import uuid
+    from pathlib import Path
+    token = _env(cfg, "TELEGRAM_BOT_TOKEN")
+    chat = _state(cfg).get("telegram_chat_id") or _env(cfg, "TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        print("[notify] telegram not configured; files stay on disk")
+        return False
+    sent = 0
+    for i, p in enumerate(paths):
+        p = Path(p)
+        if not p.exists():
+            continue
+        boundary = uuid.uuid4().hex
+        ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        method = "sendVideo" if p.suffix == ".mp4" else "sendDocument"
+        field = "video" if method == "sendVideo" else "document"
+        parts = [f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat}\r\n".encode()]
+        if i == 0 and caption:
+            parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n{caption[:1000]}\r\n".encode())
+        parts.append((f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{p.name}\"\r\n"
+                      f"Content-Type: {ctype}\r\n\r\n").encode() + p.read_bytes() + b"\r\n")
+        parts.append(f"--{boundary}--\r\n".encode())
+        try:
+            _post(f"https://api.telegram.org/bot{token}/{method}", b"".join(parts),
+                  {"Content-Type": f"multipart/form-data; boundary={boundary}"}, timeout=120)
+            sent += 1
+        except Exception as e:
+            print(f"[notify] telegram {method} failed for {p.name}: {str(e)[:80]}")
+    return sent > 0

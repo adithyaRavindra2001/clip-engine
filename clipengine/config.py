@@ -44,6 +44,17 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+def _secs(t) -> float:
+    """'1:02:05' / '4:34' / 274 -> seconds."""
+    if isinstance(t, (int, float)):
+        return float(t)
+    parts = [float(p) for p in str(t).strip().split(":")]
+    out = 0.0
+    for p in parts:
+        out = out * 60 + p
+    return out
+
+
 @dataclass
 class Creator:
     name: str
@@ -72,6 +83,10 @@ class Creator:
     watermark: str = ""
     # Short lowercase label used for pack folder names (todays-yt/<date>/<slug>-01/). Default: the name, lowercased.
     slug: str = ""
+    # Views at which the campaign wants analytics proof (screen recording of Studio); 0 = never. See proof.py.
+    proof_views: int = 0
+    # Keep the hook text on screen for the whole clip (briefs that demand a persistent headline, e.g. Ramp).
+    hook_hold: bool = False
     # YouTube channel this campaign publishes to (the UC... id from the Studio URL). Empty = the profile's default
     # channel. One channel per niche: the Shorts feed models one audience per channel, so crypto, streamer and
     # sports clips on one channel starve each other. All channels must be brand channels of the signed-in account.
@@ -84,14 +99,32 @@ class Creator:
     def source_urls(self) -> list[str]:
         return [x["url"] if isinstance(x, dict) else x for x in self.sources]
 
+    # Source keys that describe the footage, not how to render it (never passed to render.render).
+    _SOURCE_META = ("url", "windows", "prescribed", "note", "card", "headline", "caption_base")
+
     def source_options(self, url: str) -> dict:
         """Per-source render tweaks, e.g. crop_bottom: 0.14 to cut burned-in subtitles off a file.
         Starts from the creator-level `crop` defaults."""
         opts = {f"crop_{k}": float(v) for k, v in (self.crop or {}).items() if k in ("top", "bottom", "left", "right")}
         for x in self.sources:
             if isinstance(x, dict) and x.get("url") == url:
-                opts.update({k: v for k, v in x.items() if k != "url"})
+                opts.update({k: v for k, v in x.items() if k not in self._SOURCE_META})
         return opts
+
+    def source_windows(self, url: str) -> list[dict] | None:
+        """Prescribed windows for a source, when the brief fixes WHICH moments may be clipped (Ramp's 12 cards).
+        Source form: {url, prescribed: true}            -> the whole file is the one allowed window
+                     {url, windows: [{start: "4:34", end: "5:19", headline: "...", card: "02"}, ...]}
+        Returns [{start, end (seconds), headline, card}] or None when the source is free footage."""
+        for x in self.sources:
+            if not (isinstance(x, dict) and x.get("url") == url):
+                continue
+            if x.get("windows"):
+                return [{"start": _secs(w["start"]), "end": _secs(w["end"]), "headline": w.get("headline") or x.get("headline") or "",
+                         "card": str(w.get("card") or x.get("card") or "")} for w in x["windows"]]
+            if x.get("prescribed"):
+                return [{"start": 0.0, "end": None, "headline": x.get("headline") or "", "card": str(x.get("card") or "")}]
+        return None
 
     @property
     def allowed(self) -> bool:

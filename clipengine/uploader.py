@@ -87,7 +87,7 @@ def _profile(cfg: Config) -> Path:
     return (cfg.root / PROFILE_DIR).resolve()
 
 
-def launch(cfg: Config, headless: bool = False):
+def launch(cfg: Config, headless: bool = False, record_dir: Path | None = None):
     """Real Chrome, dedicated profile, automation banner off. Returns (playwright, context)."""
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
@@ -97,6 +97,7 @@ def launch(cfg: Config, headless: bool = False):
         args=["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check",
               "--profile-directory=Default"],
         viewport={"width": 1400, "height": 900}, locale="en-US", timezone_id="Asia/Kolkata",
+        **({"record_video_dir": str(record_dir), "record_video_size": {"width": 1400, "height": 900}} if record_dir else {}),
     )
     ctx.set_default_timeout(60_000)
     return pw, ctx
@@ -593,6 +594,7 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
     pw, ctx = launch(cfg)
     page = ctx.new_page()
     done = 0
+    failures = 0
     try:
         for e in todo[:limit]:
             name, mp4 = e["name"], root / f"{e['name']}.mp4"
@@ -634,9 +636,24 @@ def run(cfg: Config, db, day: str | None = None, limit: int = 20, spacing: int =
                 done += 1
             except Exception as ex:
                 shot = _debug(page, name, cfg)
-                print(f"  [stop] {name}: {ex}\n         screenshot: {shot}", flush=True)
-                _notify("clip upload stopped", f"{name}: {str(ex)[:200]}", cfg)
-                break
+                fatal = re.search(r"strike|warning notice|upload limit|signed out|not \S+: add that brand channel", str(ex), re.I)
+                failures += 1
+                if fatal or failures >= 2:
+                    print(f"  [stop] {name}: {ex}\n         screenshot: {shot}", flush=True)
+                    _notify("clip upload stopped", f"{name}: {str(ex)[:200]}", cfg)
+                    break
+                # One bad clip (a stalled upload, a timeout after the Mac slept) must not end the night:
+                # leave it for the retry run, start a fresh tab and carry on with the next one.
+                print(f"  [skip] {name}: {str(ex)[:160]}\n         screenshot: {shot}", flush=True)
+                _notify("clip upload: skipped one", f"{name}: {str(ex)[:200]}", cfg)
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                page = ctx.new_page()
+                time.sleep(60)
+                continue
+            failures = 0
             if done < min(limit, len(todo)):
                 pause = spacing * random.uniform(0.75, 1.5)
                 print(f"    next in {pause/60:.1f} min")
@@ -778,7 +795,8 @@ def reconcile(cfg: Config, db, dry_run: bool = False, window_min: int = 30, forc
             try:
                 videos += channel_videos(cfg, extra)
             except Exception as e:
-                print(f"  channel {extra}: listing failed ({str(e)[:60]})")
+                if "404" not in str(e):   # a brand channel with no uploads yet has no uploads playlist
+                    print(f"  channel {extra}: listing failed ({str(e)[:60]})")
         submitted = cr_submissions(page)
         recorded = {re.search(r"([\w-]{11})$", r["youtube_url"].rstrip("/")).group(1) for r in tally_rows(cfg)
                     if r.get("submitted_at") and re.search(r"[\w-]{11}$", r["youtube_url"].rstrip("/"))}

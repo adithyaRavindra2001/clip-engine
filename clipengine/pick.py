@@ -141,11 +141,26 @@ def pick_via_file(work: Path, system: str, user: str) -> Picks:
 
 def pick_moments(cfg: Config, db, creator: Creator, title: str, segments: list[dict],
                  hotspots: list[str], work: Path | None = None,
-                 used: list[tuple[float, float]] | None = None) -> list[Moment]:
+                 used: list[tuple[float, float]] | None = None,
+                 prescribed: list[dict] | None = None) -> list[Moment]:
+    """`prescribed`: windows the brief allows ([{start, end, headline, card}], see Creator.source_windows). Claude then
+    only trims inside them (to max_seconds, keeping the payoff), uses the given headline as the hook, and writes the
+    title/caption; anything outside a window is dropped."""
     c = cfg["clips"]
     style = cfg.style_guide_path.read_text() if cfg.style_guide_path.exists() else ""
 
     context = [f"Creator: {creator.name} ({creator.platform})", f"Video title: {title}"]
+    if prescribed:
+        rows = []
+        for w in prescribed:
+            end = w["end"] if w["end"] is not None else (segments[-1]["end"] if segments else 0)
+            rows.append(f"- card {w['card'] or '?'}: {_fmt(w['start'])}-{_fmt(end)} ({w['start']:.0f}s-{end:.0f}s)"
+                        + (f"  HEADLINE (use verbatim as the hook): {w['headline']}" if w["headline"] else ""))
+        context.append(
+            "PRESCRIBED WINDOWS: the brief allows ONLY these moments. Return one moment per window listed below "
+            f"(skip a window only if it is unusable). Keep start/end inside the window; if a window is longer than {c['max_seconds']}s, "
+            "choose the strongest continuous sub-window that keeps the payoff sentence intact. Where a HEADLINE is given, "
+            "set hook to exactly that text. Score every returned moment 70 or higher.\n" + "\n".join(rows))
     context.append(f"Content type: {creator.edit_style} "
                    + ("(streamer/reaction: meme sounds on the beats are welcome)" if creator.edit_style == "streamer"
                       else "(podcast/informative: every sound must be \"none\")"))
@@ -180,7 +195,8 @@ def pick_moments(cfg: Config, db, creator: Creator, title: str, segments: list[d
     if mode == "file" or (mode == "auto" and not os.environ.get("ANTHROPIC_API_KEY")):
         if work is None:
             raise RuntimeError("file mode needs a work dir")
-        return snap(pick_via_file(work, system, user).moments, segments, c["min_seconds"], c["max_seconds"], used)
+        return snap(clamp_prescribed(pick_via_file(work, system, user).moments, prescribed),
+                    segments, c["min_seconds"], c["max_seconds"], used)
 
     client = anthropic.Anthropic()
     resp = client.beta.messages.parse(
@@ -196,7 +212,24 @@ def pick_moments(cfg: Config, db, creator: Creator, title: str, segments: list[d
     if resp.stop_reason == "refusal" or resp.parsed_output is None:
         print(f"  [warn] Claude returned no picks (stop_reason={resp.stop_reason})")
         return []
-    return snap(resp.parsed_output.moments, segments, c["min_seconds"], c["max_seconds"], used)
+    return snap(clamp_prescribed(resp.parsed_output.moments, prescribed), segments, c["min_seconds"], c["max_seconds"], used)
+
+
+def clamp_prescribed(moments: list[Moment], prescribed: list[dict] | None) -> list[Moment]:
+    """Keep only moments inside a prescribed window (clamped to it) and force the window's headline as the hook."""
+    if not prescribed:
+        return moments
+    out = []
+    for m in moments:
+        for w in prescribed:
+            end = w["end"] if w["end"] is not None else float("inf")
+            if m.start < end and m.end > w["start"]:
+                m.start, m.end = max(m.start, w["start"]), min(m.end, end)
+                if w["headline"]:
+                    m.hook = w["headline"]
+                out.append(m)
+                break
+    return out
 
 
 def clean_title(t: str) -> str:

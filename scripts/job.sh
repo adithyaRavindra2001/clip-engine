@@ -39,18 +39,19 @@ rc=0
 case "$JOB" in
   daily)
     clip campaigns --auto-join --min-active 5 || echo "[campaigns] check failed (exit $?), cutting anyway"
-    ./scripts/daily_claude.sh 1 || rc=$?
+    /usr/bin/caffeinate -i -s ./scripts/daily_claude.sh 1 || rc=$?
     short="$(clip quota --short | tr '\n' ' ')"
     if [ -n "$short" ]; then notify "clip-engine: pack short" "$(date +%F): below 5 clips for $short"; rc=1; fi
     clip pack-list --notify || echo "[pack-list] failed (exit $?)"   # the list of tonight's clips, to the phone
     ;;
   upload)
-    clip upload --limit 30 --spacing 1500 || rc=$?     # 5 per campaign, ~25 min apart from 21:30 IST through the US day
+    /usr/bin/caffeinate -i -s clip upload --limit 30 --spacing 1500 || rc=$?   # caffeinate: no idle sleep while publishing (the 2026-10-28 run stalled 5 h when the Mac slept)     # 5 per campaign, ~25 min apart from 21:30 IST through the US day
     clip reconcile || true
     if grep -q "^IG_ACCESS_TOKEN=." .env 2>/dev/null; then clip instagram --limit 10 --spacing 1200 || echo "[instagram] failed (exit $?)"; fi
     ;;
   health)
     clip analytics --days 7 || echo "[analytics] refresh failed (exit $?)"   # views + hold rate first, so the report has them
+    clip proof --due --send || echo "[proof] failed (exit $?)"           # analytics screen recordings for clips past their payout threshold -> phone
     clip health || rc=$?
     ;;
   review)  exec clip review ;;

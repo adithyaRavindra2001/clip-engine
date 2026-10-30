@@ -106,3 +106,11 @@ def headroom(db: sqlite3.Connection, data_dir: Path, url: str) -> float | None:
         return None
     used = sum(e - s for s, e in used_ranges(db, row["id"]))
     return max(0.0, duration - used)
+
+
+def answered_picks(db: sqlite3.Connection, data_dir: Path, url: str) -> bool:
+    """True when Claude's answer (picks.json) is waiting to be rendered for this source: daily must come back to
+    it before opening another source, or file-mode picking never converges across many sources."""
+    from .pipeline import slug
+    row = db.execute("SELECT id, title FROM videos WHERE url = ?", (url,)).fetchone()
+    return bool(row) and (data_dir / "videos" / f"{row['id']}-{slug(row['title'] or '')}" / "picks.json").exists()

@@ -44,30 +44,46 @@ def process(cfg: Config, db, source: str, creator_name: str,
         if not duration:
             duration = ingest.probe_duration(audio)
 
-        print("  finding hotspots…")
-        tw = twitch_hotspots or []
-        replay = ingest.heatmap_hotspots(meta)
-        loud = signals.loud_spikes(audio)
-        centers = [t + 15 for t, _ in tw[:12]] + [t for t, _ in replay[:6]] + [t for t, _ in loud[:6]]
-
+        used = store.used_ranges(db, video_id)
+        prescribed = creator.source_windows(source)
+        tw, replay, loud = twitch_hotspots or [], [], []
         windows = None
-        if duration > LONG_VIDEO and len(centers) >= 3:
-            windows = transcribe.merge_windows(centers, duration)
-            mins = sum(e - s for s, e in windows) / 60
-            print(f"  transcribing {len(windows)} windows (~{mins:.0f} of {duration / 60:.0f} min)…")
+        if prescribed:
+            # The brief fixes which moments may be clipped: no hotspot hunt, transcribe just those windows,
+            # and leave out windows that were already cut.
+            for w in prescribed:
+                if w["end"] is None:
+                    w["end"] = duration or None
+            prescribed = [w for w in prescribed if not any(w["start"] < e and s < (w["end"] or duration) for s, e in used)]
+            if not prescribed:
+                print("  every prescribed window of this source is already cut")
+                store.set_video_status(db, video_id, "done")
+                return 0
+            if duration > LONG_VIDEO:
+                windows = transcribe.merge_windows([(w["start"] + (w["end"] or duration)) / 2 for w in prescribed], duration)
+            print(f"  {len(prescribed)} prescribed window(s); transcribing " + ("them…" if windows else f"full audio ({duration / 60:.0f} min)…"))
         else:
-            print(f"  transcribing full audio ({duration / 60:.0f} min)…")
+            print("  finding hotspots…")
+            replay = ingest.heatmap_hotspots(meta)
+            loud = signals.loud_spikes(audio)
+            centers = [t + 15 for t, _ in tw[:12]] + [t for t, _ in replay[:6]] + [t for t, _ in loud[:6]]
+            if duration > LONG_VIDEO and len(centers) >= 3:
+                windows = transcribe.merge_windows(centers, duration)
+                mins = sum(e - s for s, e in windows) / 60
+                print(f"  transcribing {len(windows)} windows (~{mins:.0f} of {duration / 60:.0f} min)…")
+            else:
+                print(f"  transcribing full audio ({duration / 60:.0f} min)…")
         tcfg = cfg["transcription"]
         segments = transcribe.transcribe(audio, work / "transcript.json", tcfg["model"], tcfg["language"], windows)
         if not segments:
             raise RuntimeError("transcript is empty")
 
-        used = store.used_ranges(db, video_id)
         if used:
             print(f"  {len(used)} moments already cut from this video; asking for new ones…")
         print("  asking Claude for the best moments…")
         moments = pick.pick_moments(cfg, db, creator, title, segments,
-                                    pick.describe_hotspots(tw, replay, loud), work=work, used=used)
+                                    pick.describe_hotspots(tw, replay, loud) if not prescribed else [],
+                                    work=work, used=used, prescribed=prescribed)
         print(f"  {len(moments)} moments picked; rendering…")
 
         made = 0
@@ -87,6 +103,7 @@ def process(cfg: Config, db, source: str, creator_name: str,
                                     sfx_dir=cfg.sfx_dir,
                                     mood=m.mood, seed=video_id * 100 + n,
                                     watermark=(cfg.root / creator.watermark) if creator.watermark else None,
+                                    hook_hold=creator.hook_hold,
                                     **creator.source_options(source))
             except Exception as e:
                 print(f"    [warn] clip {n} failed: {e}")

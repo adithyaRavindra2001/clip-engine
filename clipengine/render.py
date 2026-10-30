@@ -467,7 +467,7 @@ def chunk_words(words: list[dict], max_words: int = 3, max_gap: float = 0.6) -> 
 
 
 def build_ass(words: list[dict], offset: float, duration: float, hook: str, split: bool = False,
-              accent: str = DEFAULT_BRAND["accent"], hook_animation: bool = True) -> str:
+              accent: str = DEFAULT_BRAND["accent"], hook_animation: bool = True, hook_hold: bool = False) -> str:
     global HIGHLIGHT
     HIGHLIGHT = "{\\c" + _ass_colour(accent) + "}"
     lines = [ASS_HEADER]
@@ -476,7 +476,9 @@ def build_ass(words: list[dict], offset: float, duration: float, hook: str, spli
         margin = TOP_H + 30 if split else 0
         pop = HOOK_POP if hook_animation else ""
         plain, _ = split_emoji(_clean(hook))
-        lines.append(f"Dialogue: 1,{_t(0)},{_t(min(4.0, duration))},Hook,,0,0,{margin},,{pop}{plain.upper()}\n")
+        # hook_hold: some briefs (Ramp) want the headline on screen for the whole clip, not just the first 4 s.
+        hook_end = duration if hook_hold else min(4.0, duration)
+        lines.append(f"Dialogue: 1,{_t(0)},{_t(hook_end)},Hook,,0,0,{margin},,{pop}{plain.upper()}\n")
     rel = [{**w, "start": w["start"] - offset, "end": w["end"] - offset} for w in words]
     chunks = chunk_words(rel)
     for ci, chunk in enumerate(chunks):
@@ -518,8 +520,10 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
            brand: dict | None = None, music: Path | None = None,
            crop_top: float = 0.0, crop_bottom: float = 0.0, crop_left: float = 0.0, crop_right: float = 0.0,
            beats: list[float] | None = None, sfx_dir: Path | None = None, mood: str = "neutral",
-           seed: int = 0, sounds: list[str] | None = None, watermark: Path | None = None) -> Path:
-    """`beats` are seconds into the clip where the payoff lands (punchline, reveal); they get an impact."""
+           seed: int = 0, sounds: list[str] | None = None, watermark: Path | None = None,
+           hook_hold: bool = False) -> Path:
+    """`beats` are seconds into the clip where the payoff lands (punchline, reveal); they get an impact.
+    `hook_hold` keeps the hook text up for the whole clip (campaign briefs that want a persistent headline)."""
     b = {**DEFAULT_BRAND, **(brand or {})}
     L = choose_layout(src, layout, facecam)
     duration = float(subprocess.run(
@@ -545,7 +549,7 @@ def render(src: Path, out: Path, words: list[dict], offset: float, hook: str,
             print(f"    speaker crop: {len(segs)} segments across {len({s_[2] for s_ in segs})} people")
     ass = out.with_suffix(".ass")
     ass.write_text(build_ass(words, offset, duration, hook, split=L["kind"] == "split",
-                             accent=b["accent"], hook_animation=b["hook_animation"]))
+                             accent=b["accent"], hook_animation=b["hook_animation"], hook_hold=hook_hold))
 
     graph = _with_light(video_filter(L, crop_top, crop_bottom, crop_left, crop_right), src)
     punches = sorted(t for t in beats if 0.8 < t < duration - 0.4)[:2] if b.get("punch_in") else []
